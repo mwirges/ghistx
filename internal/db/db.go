@@ -1,0 +1,110 @@
+// Package db manages the SQLite database for ghistx.
+//
+// The schema is identical to the C histx version for full cross-tool
+// compatibility. Migration 1 adds the cwd column to cmdraw if not present.
+package db
+
+import (
+	"database/sql"
+	"fmt"
+
+	_ "modernc.org/sqlite" // register sqlite driver
+)
+
+const thisVersion = 1
+
+const ddl = `
+CREATE TABLE IF NOT EXISTS cmdlut (
+    host   TEXT,
+    ngram  INTEGER,
+    hash   TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ngramindex     ON cmdlut(ngram, hash);
+CREATE INDEX        IF NOT EXISTS ngramhashindex ON cmdlut(hash);
+
+CREATE TABLE IF NOT EXISTS cmdraw (
+    hash TEXT,
+    ts   INTEGER,
+    cmd  TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS hashindex ON cmdraw(hash);
+CREATE INDEX        IF NOT EXISTS tsindex   ON cmdraw(ts);
+
+CREATE TABLE IF NOT EXISTS cmdan (
+    hash TEXT PRIMARY KEY,
+    type INTEGER,
+    desc TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS anindex ON cmdan(hash, type);
+
+CREATE TABLE IF NOT EXISTS histxversion (
+    version INTEGER PRIMARY KEY ASC,
+    whence  INTEGER
+);
+`
+
+// Open opens (or creates) the SQLite database at path, applies the schema,
+// and runs any pending migrations. Use ":memory:" for in-process testing.
+func Open(path string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, fmt.Errorf("db: open %q: %w", path, err)
+	}
+
+	if _, err := db.Exec(ddl); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("db: init schema: %w", err)
+	}
+
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	return db, nil
+}
+
+// version returns the highest migration version recorded, or 0 if none.
+func version(db *sql.DB) (int, error) {
+	var v sql.NullInt64
+	err := db.QueryRow(`SELECT MAX(version) FROM histxversion`).Scan(&v)
+	if err != nil {
+		return 0, fmt.Errorf("db: read version: %w", err)
+	}
+	if !v.Valid {
+		return 0, nil
+	}
+	return int(v.Int64), nil
+}
+
+func migrate(db *sql.DB) error {
+	v, err := version(db)
+	if err != nil {
+		return err
+	}
+	if v < 1 {
+		if err := migration1(db); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// migration1 adds the cwd column to cmdraw (compatibility with histx v1 schema).
+func migration1(db *sql.DB) error {
+	// ALTER TABLE fails if the column already exists; swallow that error.
+	_, err := db.Exec(`ALTER TABLE cmdraw ADD COLUMN cwd TEXT`)
+	if err != nil {
+		// modernc sqlite returns a non-nil error with "duplicate column name"
+		// if the column already exists — that is fine.
+		_ = err
+	}
+	_, err = db.Exec(
+		`INSERT INTO histxversion(version, whence) VALUES(?, unixepoch())`,
+		thisVersion,
+	)
+	if err != nil {
+		return fmt.Errorf("db: mark migration 1: %w", err)
+	}
+	return nil
+}
