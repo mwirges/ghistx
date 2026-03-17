@@ -16,6 +16,9 @@ func TestDefaults(t *testing.T) {
 	if cfg.ViMode {
 		t.Error("default ViMode should be false")
 	}
+	if !cfg.LocalOnly {
+		t.Error("default LocalOnly should be true")
+	}
 }
 
 func TestMissingFile(t *testing.T) {
@@ -103,5 +106,34 @@ func TestFalseValues(t *testing.T) {
 	}
 	if cfg.ViMode {
 		t.Error("ViMode should be false")
+	}
+}
+
+func TestLocalOnly(t *testing.T) {
+	// Default is true.
+	cfg, err := Parse(strings.NewReader(""))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.LocalOnly {
+		t.Error("default LocalOnly should be true")
+	}
+
+	// Explicitly set to false.
+	cfg, err = Parse(strings.NewReader("local-only = false\n"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.LocalOnly {
+		t.Error("LocalOnly should be false after 'local-only = false'")
+	}
+
+	// Explicitly set to true.
+	cfg, err = Parse(strings.NewReader("local-only = true\n"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.LocalOnly {
+		t.Error("LocalOnly should be true after 'local-only = true'")
 	}
 }

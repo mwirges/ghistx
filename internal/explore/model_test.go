@@ -12,7 +12,7 @@ import (
 
 func makeModel(mode Mode) model {
 	cfg := config.Default()
-	return newModel(nil, cfg, mode)
+	return newModel(nil, cfg, mode, "")
 }
 
 func makeModelWithHits(hits []find.Hit) model {
@@ -46,8 +46,8 @@ func TestInitialState(t *testing.T) {
 }
 
 func TestViModeInitialState(t *testing.T) {
-	cfg := config.Config{ViMode: true, SearchLimit: 5}
-	m := newModel(nil, cfg, ModeExplore)
+	cfg := config.Config{ViMode: true, SearchLimit: 5, LocalOnly: true}
+	m := newModel(nil, cfg, ModeExplore, "")
 	if !m.commandMode {
 		t.Error("vi mode: initial commandMode should be true")
 	}
@@ -159,8 +159,8 @@ func TestEscQuits(t *testing.T) {
 }
 
 func TestViModeEscEntersCommandMode(t *testing.T) {
-	cfg := config.Config{ViMode: true, SearchLimit: 5}
-	m := newModel(nil, cfg, ModeExplore)
+	cfg := config.Config{ViMode: true, SearchLimit: 5, LocalOnly: true}
+	m := newModel(nil, cfg, ModeExplore, "")
 	m.commandMode = false // start in insert mode
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
@@ -174,8 +174,8 @@ func TestViModeEscEntersCommandMode(t *testing.T) {
 }
 
 func TestViModeIEntersInsert(t *testing.T) {
-	cfg := config.Config{ViMode: true, SearchLimit: 5}
-	m := newModel(nil, cfg, ModeExplore)
+	cfg := config.Config{ViMode: true, SearchLimit: 5, LocalOnly: true}
+	m := newModel(nil, cfg, ModeExplore, "")
 	// commandMode starts true in vi mode
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
@@ -186,8 +186,8 @@ func TestViModeIEntersInsert(t *testing.T) {
 }
 
 func TestViModeJKNavigation(t *testing.T) {
-	cfg := config.Config{ViMode: true, SearchLimit: 5}
-	m := newModel(nil, cfg, ModeExplore)
+	cfg := config.Config{ViMode: true, SearchLimit: 5, LocalOnly: true}
+	m := newModel(nil, cfg, ModeExplore, "")
 	m.hits = []find.Hit{{Cmd: "cmd1"}, {Cmd: "cmd2"}, {Cmd: "cmd3"}}
 	// vi mode starts in command mode
 
@@ -249,6 +249,47 @@ func TestViewRendersPrompt(t *testing.T) {
 	// Should contain our query text.
 	if !contains(view, "git") {
 		t.Errorf("View() doesn't contain query %q: %s", "git", view)
+	}
+}
+
+func TestViewGlobalTag(t *testing.T) {
+	m := makeModel(ModeExplore)
+	m.termWidth = 80
+	m.isGlobal = true
+	view := m.View()
+	if !contains(view, "[global]") {
+		t.Errorf("View() should contain [global] tag when isGlobal=true, got: %s", view)
+	}
+
+	m.isGlobal = false
+	view = m.View()
+	if contains(view, "[global]") {
+		t.Errorf("View() should NOT contain [global] tag when isGlobal=false")
+	}
+}
+
+func TestCWDFilterStoredInModel(t *testing.T) {
+	cfg := config.Default()
+	m := newModel(nil, cfg, ModeExplore, "/home/user/project")
+	if m.cwdFilter != "/home/user/project" {
+		t.Errorf("cwdFilter = %q, want \"/home/user/project\"", m.cwdFilter)
+	}
+}
+
+func TestSearchResultMsgUpdatesIsGlobal(t *testing.T) {
+	m := makeModel(ModeExplore)
+	m.hits = []find.Hit{{Cmd: "old"}}
+
+	updated, _ := m.Update(searchResultMsg{
+		hits:     []find.Hit{{Cmd: "new"}},
+		isGlobal: true,
+	})
+	m = updated.(model)
+	if !m.isGlobal {
+		t.Error("isGlobal should be true after searchResultMsg with isGlobal=true")
+	}
+	if len(m.hits) != 1 || m.hits[0].Cmd != "new" {
+		t.Errorf("hits not updated correctly: %v", m.hits)
 	}
 }
 

@@ -23,14 +23,16 @@ import (
 // Config holds the parsed settings from ~/.histx.
 type Config struct {
 	ExploreBasic bool
-	SearchLimit  int // clamped to [5, 20], default 5
+	SearchLimit  int  // clamped to [5, 20], default 5
 	ViMode       bool
+	LocalOnly    bool // default true — filter results to current directory
 }
 
 // Default returns a Config with default values.
 func Default() Config {
 	return Config{
 		SearchLimit: 5,
+		LocalOnly:   true,
 	}
 }
 
@@ -70,6 +72,8 @@ func Parse(r io.Reader) (Config, error) {
 			cfg.ExploreBasic = val == "true"
 		case "vi-mode":
 			cfg.ViMode = val == "true"
+		case "local-only":
+			cfg.LocalOnly = val != "false"
 		case "search-limit":
 			n, err := strconv.Atoi(val)
 			if err != nil {

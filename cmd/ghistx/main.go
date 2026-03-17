@@ -86,6 +86,23 @@ func getCfg(c *cli.Context) config.Config {
 	return config.Default()
 }
 
+// resolveCWDFilter returns the current working directory to use as a CWD
+// filter, or "" if global search is requested (via --global flag or config).
+func resolveCWDFilter(c *cli.Context, cfg config.Config) string {
+	if c.Bool("global") || !cfg.LocalOnly {
+		return ""
+	}
+	cwd, _ := os.Getwd()
+	return cwd
+}
+
+// globalFlag is the shared --global/-g flag added to search subcommands.
+var globalFlag = &cli.BoolFlag{
+	Name:    "global",
+	Aliases: []string{"g"},
+	Usage:   "search all directories, not just the current one",
+}
+
 // indexCmd indexes one or more commands.
 // Usage:
 //
@@ -140,6 +157,7 @@ func findCmd() *cli.Command {
 		Name:      "find",
 		Usage:     "Search history for matching commands",
 		ArgsUsage: "<keyword> [keyword...]",
+		Flags:     []cli.Flag{globalFlag},
 		Action: func(c *cli.Context) error {
 			d := getDB(c)
 			cfg := getCfg(c)
@@ -149,11 +167,14 @@ func findCmd() *cli.Command {
 				return cli.ShowCommandHelp(c, "find")
 			}
 
-			hits, err := find.Cmd(d, keywords, cfg.SearchLimit)
+			res, err := find.Cmd(d, keywords, cfg.SearchLimit, resolveCWDFilter(c, cfg))
 			if err != nil {
 				return err
 			}
-			for _, h := range hits {
+			if res.IsGlobal && len(res.Hits) > 0 {
+				fmt.Println("── no local results, showing global ──")
+			}
+			for _, h := range res.Hits {
 				when := util.FormatRelative(h.TS)
 				if h.CWD != "" {
 					fmt.Printf("[%s] %s (%s)\n", when, h.Cmd, h.CWD)
@@ -171,9 +192,11 @@ func catCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "cat",
 		Usage: "Print all history entries ordered oldest-first",
+		Flags: []cli.Flag{globalFlag},
 		Action: func(c *cli.Context) error {
 			d := getDB(c)
-			hits, err := cat.Cmd(d)
+			cfg := getCfg(c)
+			hits, err := cat.Cmd(d, resolveCWDFilter(c, cfg))
 			if err != nil {
 				return err
 			}
@@ -196,6 +219,7 @@ func exploreCmd() *cli.Command {
 		Name:      "explore",
 		Usage:     "Interactively search and select a history entry",
 		ArgsUsage: "[tmpfile]",
+		Flags:     []cli.Flag{globalFlag},
 		Action: func(c *cli.Context) error {
 			d := getDB(c)
 			cfg := getCfg(c)
@@ -205,7 +229,7 @@ func exploreCmd() *cli.Command {
 				tmpFile = c.Args().First()
 			}
 
-			return explore.Run(d, cfg, explore.ModeExplore, tmpFile)
+			return explore.Run(d, cfg, explore.ModeExplore, tmpFile, resolveCWDFilter(c, cfg))
 		},
 	}
 }
@@ -215,10 +239,11 @@ func pruneCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "prune",
 		Usage: "Interactively mark and delete history entries",
+		Flags: []cli.Flag{globalFlag},
 		Action: func(c *cli.Context) error {
 			d := getDB(c)
 			cfg := getCfg(c)
-			return explore.Run(d, cfg, explore.ModePrune, "")
+			return explore.Run(d, cfg, explore.ModePrune, "", resolveCWDFilter(c, cfg))
 		},
 	}
 }

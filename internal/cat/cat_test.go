@@ -24,7 +24,7 @@ func TestCatOldestFirst(t *testing.T) {
 		time.Sleep(5 * time.Millisecond) // ensure ts ordering
 	}
 
-	hits, err := Cmd(d)
+	hits, err := Cmd(d, "")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestCatEmpty(t *testing.T) {
 	}
 	defer d.Close()
 
-	hits, err := Cmd(d)
+	hits, err := Cmd(d, "")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestCatCWDPreserved(t *testing.T) {
 		t.Fatalf("index.Cmd: %v", err)
 	}
 
-	hits, err := Cmd(d)
+	hits, err := Cmd(d, "")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -84,5 +84,41 @@ func TestCatCWDPreserved(t *testing.T) {
 	}
 	if hits[0].CWD != "/home/user/project" {
 		t.Errorf("CWD = %q, want \"/home/user/project\"", hits[0].CWD)
+	}
+}
+
+func TestCatCWDFilter(t *testing.T) {
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	defer d.Close()
+
+	if err := index.Cmd(d, "make test", "/home/user/project"); err != nil {
+		t.Fatalf("index.Cmd: %v", err)
+	}
+	if err := index.Cmd(d, "make build", "/other/project"); err != nil {
+		t.Fatalf("index.Cmd: %v", err)
+	}
+
+	// Filter to /home/user/project — only one result.
+	hits, err := Cmd(d, "/home/user/project")
+	if err != nil {
+		t.Fatalf("Cmd: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("expected 1 hit with CWD filter, got %d", len(hits))
+	}
+	if hits[0].Cmd != "make test" {
+		t.Errorf("hit = %q, want \"make test\"", hits[0].Cmd)
+	}
+
+	// Empty filter returns all.
+	hits, err = Cmd(d, "")
+	if err != nil {
+		t.Fatalf("Cmd (global): %v", err)
+	}
+	if len(hits) != 2 {
+		t.Errorf("expected 2 hits for global, got %d", len(hits))
 	}
 }

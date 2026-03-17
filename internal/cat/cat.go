@@ -11,13 +11,19 @@ import (
 	"github.com/mwirges/ghistx/internal/find"
 )
 
-// Cmd returns all commands from the database, ordered oldest-first.
-func Cmd(db *sql.DB) ([]find.Hit, error) {
-	rows, err := db.Query(`
-		SELECT hash, ts, cmd, cwd
-		FROM cmdraw
-		ORDER BY ts ASC
-	`)
+// Cmd returns commands from the database, ordered oldest-first.
+// When cwdFilter is non-empty, only commands indexed from that directory are returned.
+func Cmd(db *sql.DB, cwdFilter string) ([]find.Hit, error) {
+	query := `SELECT hash, ts, cmd, cwd FROM cmdraw`
+	var args []any
+	if cwdFilter != "" {
+		b64filter := base64.StdEncoding.EncodeToString([]byte(cwdFilter))
+		query += ` WHERE cwd = ?`
+		args = append(args, b64filter)
+	}
+	query += ` ORDER BY ts ASC`
+
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("cat: query: %w", err)
 	}

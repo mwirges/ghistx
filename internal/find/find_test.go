@@ -45,15 +45,18 @@ func TestFindExactMatch(t *testing.T) {
 		time.Sleep(2 * time.Millisecond) // ensure distinct timestamps
 	}
 
-	hits, err := Cmd(d, []string{"git", "status"}, 5)
+	res, err := Cmd(d, []string{"git", "status"}, 5, "")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
-	if len(hits) == 0 {
+	if len(res.Hits) == 0 {
 		t.Fatal("expected at least one hit")
 	}
-	if hits[0].Cmd != "git status" {
-		t.Errorf("first hit = %q, want %q", hits[0].Cmd, "git status")
+	if res.Hits[0].Cmd != "git status" {
+		t.Errorf("first hit = %q, want %q", res.Hits[0].Cmd, "git status")
+	}
+	if res.IsGlobal {
+		t.Error("IsGlobal should be false for empty cwdFilter")
 	}
 }
 
@@ -73,14 +76,14 @@ func TestFindShortKeywordACS(t *testing.T) {
 	}
 
 	// "ls" is 2 chars -> triggers ACS path
-	hits, err := Cmd(d, []string{"ls"}, 5)
+	res, err := Cmd(d, []string{"ls"}, 5, "")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
-	if len(hits) == 0 {
+	if len(res.Hits) == 0 {
 		t.Fatal("expected at least one hit")
 	}
-	for _, h := range hits {
+	for _, h := range res.Hits {
 		found := false
 		for _, c := range []string{"ls", "ls -la"} {
 			if h.Cmd == c {
@@ -105,12 +108,12 @@ func TestFindNoResults(t *testing.T) {
 		t.Fatalf("index.Cmd: %v", err)
 	}
 
-	hits, err := Cmd(d, []string{"zzznomatch"}, 5)
+	res, err := Cmd(d, []string{"zzznomatch"}, 5, "")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
-	if len(hits) != 0 {
-		t.Errorf("expected 0 hits, got %d", len(hits))
+	if len(res.Hits) != 0 {
+		t.Errorf("expected 0 hits, got %d", len(res.Hits))
 	}
 }
 
@@ -125,12 +128,12 @@ func TestFindEmptyKeywords(t *testing.T) {
 		t.Fatalf("index.Cmd: %v", err)
 	}
 
-	hits, err := Cmd(d, []string{""}, 5)
+	res, err := Cmd(d, []string{""}, 5, "")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
-	if len(hits) != 0 {
-		t.Errorf("expected 0 hits for empty keyword, got %d", len(hits))
+	if len(res.Hits) != 0 {
+		t.Errorf("expected 0 hits for empty keyword, got %d", len(res.Hits))
 	}
 }
 
@@ -151,12 +154,12 @@ func TestFindLimit(t *testing.T) {
 		time.Sleep(1 * time.Millisecond)
 	}
 
-	hits, err := Cmd(d, []string{"testing"}, 3)
+	res, err := Cmd(d, []string{"testing"}, 3, "")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
-	if len(hits) > 3 {
-		t.Errorf("expected at most 3 hits, got %d", len(hits))
+	if len(res.Hits) > 3 {
+		t.Errorf("expected at most 3 hits, got %d", len(res.Hits))
 	}
 }
 
@@ -171,14 +174,91 @@ func TestFindCWDDecoded(t *testing.T) {
 		t.Fatalf("index.Cmd: %v", err)
 	}
 
-	hits, err := Cmd(d, []string{"make"}, 5)
+	res, err := Cmd(d, []string{"make"}, 5, "")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
-	if len(hits) == 0 {
+	if len(res.Hits) == 0 {
 		t.Fatal("expected hit")
 	}
-	if hits[0].CWD != "/home/user/project" {
-		t.Errorf("CWD = %q, want \"/home/user/project\"", hits[0].CWD)
+	if res.Hits[0].CWD != "/home/user/project" {
+		t.Errorf("CWD = %q, want \"/home/user/project\"", res.Hits[0].CWD)
+	}
+}
+
+func TestFindCWDFilterLocalMatch(t *testing.T) {
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	defer d.Close()
+
+	if err := index.Cmd(d, "make test", "/home/user/project"); err != nil {
+		t.Fatalf("index.Cmd: %v", err)
+	}
+	if err := index.Cmd(d, "make build", "/other/project"); err != nil {
+		t.Fatalf("index.Cmd: %v", err)
+	}
+
+	res, err := Cmd(d, []string{"make"}, 5, "/home/user/project")
+	if err != nil {
+		t.Fatalf("Cmd: %v", err)
+	}
+	if len(res.Hits) != 1 {
+		t.Fatalf("expected 1 local hit, got %d", len(res.Hits))
+	}
+	if res.Hits[0].Cmd != "make test" {
+		t.Errorf("hit = %q, want \"make test\"", res.Hits[0].Cmd)
+	}
+	if res.IsGlobal {
+		t.Error("IsGlobal should be false when local results exist")
+	}
+}
+
+func TestFindCWDFilterNoLocalFallsBack(t *testing.T) {
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	defer d.Close()
+
+	if err := index.Cmd(d, "make test", "/home/user/project"); err != nil {
+		t.Fatalf("index.Cmd: %v", err)
+	}
+
+	// Search from a different directory — no local match.
+	res, err := Cmd(d, []string{"make"}, 5, "/tmp")
+	if err != nil {
+		t.Fatalf("Cmd: %v", err)
+	}
+	if len(res.Hits) == 0 {
+		t.Fatal("expected global fallback to return hits")
+	}
+	if !res.IsGlobal {
+		t.Error("IsGlobal should be true after local-miss fallback")
+	}
+}
+
+func TestFindCWDFilterGlobalOverride(t *testing.T) {
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	defer d.Close()
+
+	if err := index.Cmd(d, "make test", "/home/user/project"); err != nil {
+		t.Fatalf("index.Cmd: %v", err)
+	}
+
+	// Empty cwdFilter = global (no filtering).
+	res, err := Cmd(d, []string{"make"}, 5, "")
+	if err != nil {
+		t.Fatalf("Cmd: %v", err)
+	}
+	if len(res.Hits) == 0 {
+		t.Fatal("expected at least one hit")
+	}
+	if res.IsGlobal {
+		t.Error("IsGlobal should be false when cwdFilter is empty")
 	}
 }
