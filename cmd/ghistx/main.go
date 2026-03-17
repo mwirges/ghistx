@@ -141,12 +141,8 @@ func indexCmd() *cli.Command {
 				return cli.ShowCommandHelp(c, "index")
 			}
 
-			for _, cmd := range c.Args().Slice() {
-				if err := index.Cmd(d, cmd, cwd); err != nil {
-					return err
-				}
-			}
-			return nil
+			cmd := strings.Join(c.Args().Slice(), " ")
+			return index.Cmd(d, cmd, cwd)
 		},
 	}
 }
