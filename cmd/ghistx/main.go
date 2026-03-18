@@ -139,6 +139,14 @@ func isHexString(s string) bool {
 	return true
 }
 
+// clearCWD zeroes out the CWD field on all hits. Used when results are
+// already scoped to the current directory, making the CWD redundant.
+func clearCWD(hits []find.Hit) {
+	for i := range hits {
+		hits[i].CWD = ""
+	}
+}
+
 // isatty reports whether f is connected to a terminal.
 func isatty(f *os.File) bool {
 	fi, err := f.Stat()
@@ -150,13 +158,17 @@ func isatty(f *os.File) bool {
 func runHistory(c *cli.Context) error {
 	d := getDB(c)
 	cfg := getCfg(c)
-	hits, err := cat.Cmd(d, resolveCWDFilter(c, cfg))
+	cwdFilter := resolveCWDFilter(c, cfg)
+	hits, err := cat.Cmd(d, cwdFilter)
 	if err != nil {
 		return err
 	}
 	// Reverse to newest-first.
 	for i, j := 0, len(hits)-1; i < j; i, j = i+1, j-1 {
 		hits[i], hits[j] = hits[j], hits[i]
+	}
+	if cwdFilter != "" {
+		clearCWD(hits)
 	}
 	// Render with color keyed off the real stdout (not the pipe we may write to).
 	content := display.Render(hits, os.Stdout)
@@ -273,16 +285,18 @@ func findCmd() *cli.Command {
 				return cli.ShowCommandHelp(c, "find")
 			}
 
-			res, err := find.Cmd(d, keywords, cfg.SearchLimit, resolveCWDFilter(c, cfg))
+			cwdFilter := resolveCWDFilter(c, cfg)
+			res, err := find.Cmd(d, keywords, cfg.SearchLimit, cwdFilter)
 			if err != nil {
 				return err
 			}
 			if res.IsGlobal && len(res.Hits) > 0 {
 				fmt.Println("── no local results, showing global ──")
 			}
+			showCWD := cwdFilter == "" || res.IsGlobal
 			for _, h := range res.Hits {
 				when := util.FormatRelative(h.TS)
-				if h.CWD != "" {
+				if h.CWD != "" && showCWD {
 					fmt.Printf("[%s] %s (%s)\n", when, h.Cmd, h.CWD)
 				} else {
 					fmt.Printf("[%s] %s\n", when, h.Cmd)
@@ -302,9 +316,13 @@ func catCmd() *cli.Command {
 		Action: func(c *cli.Context) error {
 			d := getDB(c)
 			cfg := getCfg(c)
-			hits, err := cat.Cmd(d, resolveCWDFilter(c, cfg))
+			cwdFilter := resolveCWDFilter(c, cfg)
+			hits, err := cat.Cmd(d, cwdFilter)
 			if err != nil {
 				return err
+			}
+			if cwdFilter != "" {
+				clearCWD(hits)
 			}
 			return display.PrintHits(os.Stdout, hits)
 		},
