@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -12,8 +13,10 @@ import (
 
 	"github.com/mwirges/ghistx/internal/cat"
 	"github.com/mwirges/ghistx/internal/config"
+	"github.com/mwirges/ghistx/internal/display"
 	"github.com/mwirges/ghistx/internal/explore"
 	"github.com/mwirges/ghistx/internal/find"
+	"github.com/mwirges/ghistx/internal/hashlet"
 	"github.com/mwirges/ghistx/internal/index"
 	interndb "github.com/mwirges/ghistx/internal/db"
 	"github.com/mwirges/ghistx/internal/util"
@@ -38,6 +41,12 @@ func main() {
 				Value:   filepath.Join(os.Getenv("HOME"), ".histx.db"),
 				Usage:   "path to the histx SQLite database",
 			},
+			globalFlag, // app-level --global for default action
+			&cli.StringFlag{
+				Name:   "tmpfile",
+				Usage:  "write resolved command to this file (used by shell integration)",
+				Hidden: true,
+			},
 		},
 		Before: func(c *cli.Context) error {
 			dbPath := c.String("db")
@@ -59,6 +68,20 @@ func main() {
 				d.Close()
 			}
 			return nil
+		},
+		// Default action: no subcommand supplied.
+		// A single hex argument >= 4 chars is treated as a hashlet re-execution.
+		Action: func(c *cli.Context) error {
+			if c.NArg() == 1 {
+				arg := c.Args().First()
+				if isHexString(arg) {
+					return runHashlet(c, arg)
+				}
+			}
+			if c.NArg() > 0 {
+				return fmt.Errorf("unknown command %q; see --help", c.Args().First())
+			}
+			return runHistory(c)
 		},
 		Commands: []*cli.Command{
 			indexCmd(),
@@ -101,6 +124,93 @@ var globalFlag = &cli.BoolFlag{
 	Name:    "global",
 	Aliases: []string{"g"},
 	Usage:   "search all directories, not just the current one",
+}
+
+// isHexString returns true if s is a valid hex string of at least 4 characters.
+func isHexString(s string) bool {
+	if len(s) < 4 {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+// isatty reports whether f is connected to a terminal.
+func isatty(f *os.File) bool {
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+// runHistory shows history newest-to-oldest, piped through $PAGER when set and
+// stdout is a terminal.
+func runHistory(c *cli.Context) error {
+	d := getDB(c)
+	cfg := getCfg(c)
+	hits, err := cat.Cmd(d, resolveCWDFilter(c, cfg))
+	if err != nil {
+		return err
+	}
+	// Reverse to newest-first.
+	for i, j := 0, len(hits)-1; i < j; i, j = i+1, j-1 {
+		hits[i], hits[j] = hits[j], hits[i]
+	}
+	// Render with color keyed off the real stdout (not the pipe we may write to).
+	content := display.Render(hits, os.Stdout)
+	return runWithPager(content)
+}
+
+// runWithPager pipes content through $PAGER when set and stdout is a terminal.
+// If $PAGER is unset or stdout is not a terminal, content is written directly.
+func runWithPager(content string) error {
+	pager := os.Getenv("PAGER")
+	if pager != "" && isatty(os.Stdout) {
+		pr, pw, err := os.Pipe()
+		if err == nil {
+			cmd := exec.Command("sh", "-c", pager)
+			cmd.Stdin = pr
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if startErr := cmd.Start(); startErr == nil {
+				pr.Close()
+				_, writeErr := fmt.Fprint(pw, content)
+				pw.Close()
+				waitErr := cmd.Wait()
+				if writeErr != nil {
+					return writeErr
+				}
+				return waitErr
+			}
+			pw.Close()
+			pr.Close()
+		}
+	}
+	_, err := fmt.Fprint(os.Stdout, content)
+	return err
+}
+
+// runHashlet looks up a command by hash prefix and either writes it to a
+// tmpfile (shell integration) or prints it to stdout.
+func runHashlet(c *cli.Context, prefix string) error {
+	d := getDB(c)
+	h, err := hashlet.FindByPrefix(d, prefix)
+	if err != nil {
+		return err
+	}
+	if tmpFile := c.String("tmpfile"); tmpFile != "" {
+		f, err := os.Create(tmpFile)
+		if err != nil {
+			return fmt.Errorf("hashlet: create tmpfile: %w", err)
+		}
+		defer f.Close()
+		fmt.Fprintln(f, h.Cmd)
+		return nil
+	}
+	fmt.Println(h.Cmd)
+	return nil
 }
 
 // indexCmd indexes one or more commands.
@@ -196,15 +306,7 @@ func catCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			for _, h := range hits {
-				when := util.FormatRelative(h.TS)
-				if h.CWD != "" {
-					fmt.Printf("[%s] %s (%s)\n", when, h.Cmd, h.CWD)
-				} else {
-					fmt.Printf("[%s] %s\n", when, h.Cmd)
-				}
-			}
-			return nil
+			return display.PrintHits(os.Stdout, hits)
 		},
 	}
 }
@@ -249,3 +351,4 @@ func pruneCmd() *cli.Command {
 func splitKeywords(s string) []string {
 	return strings.Fields(s)
 }
+

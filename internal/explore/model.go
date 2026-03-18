@@ -328,7 +328,7 @@ func Run(db *sql.DB, cfg config.Config, mode Mode, tmpFile string, cwdFilter str
 		} else if cfg.ExploreBasic {
 			fmt.Println(selected)
 		} else {
-			if err := injectTIOCSTI(selected); err != nil {
+			if err := InjectTIOCSTI(selected); err != nil {
 				// Graceful fallback.
 				fmt.Println(selected)
 			}
