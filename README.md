@@ -288,8 +288,8 @@ squelch = glob:git diff *
 Navigation: `1`–`5` or `tab`/`shift+tab` to switch tabs, `j`/`k` to scroll lists, `g` to jump to top, `q` to quit.
 
 ```sh
-ghistx analyze              # current directory only (respects local-only config)
-ghistx analyze --global     # all directories
+ghistx analyze              # all directories (global by default)
+ghistx analyze --local      # restrict to current directory
 ghistx analyze --by-program # Commands tab groups by program name instead of full command
 ghistx analyze --source all # include Claude-indexed commands too
 ```

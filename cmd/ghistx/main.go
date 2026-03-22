@@ -437,9 +437,13 @@ func analyzeCmd() *cli.Command {
 		Name:  "analyze",
 		Usage: "Analyze command history statistics with an interactive TUI",
 		Flags: []cli.Flag{
-			globalFlag,
 			sourceFlag,
 			withSquelchFlag,
+			&cli.BoolFlag{
+				Name:    "local",
+				Aliases: []string{"l"},
+				Usage:   "restrict analysis to the current directory",
+			},
 			&cli.BoolFlag{
 				Name:  "by-program",
 				Usage: "group Commands tab by program name instead of full command",
@@ -447,8 +451,10 @@ func analyzeCmd() *cli.Command {
 		},
 		Action: func(c *cli.Context) error {
 			d := getDB(c)
-			cfg := getCfg(c)
-			cwdFilter := resolveCWDFilter(c, cfg)
+			cwdFilter := ""
+			if c.Bool("local") {
+				cwdFilter, _ = os.Getwd()
+			}
 			stats, err := analyze.Compute(d, cwdFilter, resolveSourceFilter(c), resolveSquelchPatterns(c))
 			if err != nil {
 				return err
