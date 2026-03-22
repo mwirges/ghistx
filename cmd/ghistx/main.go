@@ -100,6 +100,7 @@ func main() {
 			catCmd(),
 			exploreCmd(),
 			pruneCmd(),
+			claudeCmd(),
 		},
 	}
 

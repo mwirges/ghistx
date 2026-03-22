@@ -26,6 +26,8 @@ ghistx find <keyword...>  # search history
 ghistx cat                # dump all history oldest-first
 ghistx explore [tmpfile]  # interactive fuzzy-search TUI
 ghistx prune              # interactive TUI to mark and delete entries
+ghistx claude             # browse Claude Code command history (global, source=claude)
+ghistx claude install     # install the Claude Code hook automatically
 ```
 
 Add `--global` / `-g` to any command to search across all directories instead of just the current one.
@@ -280,7 +282,17 @@ A `PostToolUse` hook fires after every `Bash` tool call. The hook script reads t
 
 ### Setup
 
-**1. Create the hook script** at `~/.claude/hooks/ghistx-index.sh`:
+Run the install command to set everything up automatically:
+
+```sh
+ghistx claude install
+```
+
+This creates the hook script and registers it in `~/.claude/settings.json`. Running it again is safe (idempotent). Restart Claude Code to activate.
+
+#### Manual setup
+
+If you prefer to configure it yourself — **1. Create the hook script** at `~/.claude/hooks/ghistx-index.sh`:
 
 ```sh
 #!/bin/sh
