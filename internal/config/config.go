@@ -22,10 +22,12 @@ import (
 
 // Config holds the parsed settings from ~/.histx.
 type Config struct {
-	ExploreBasic bool
-	SearchLimit  int  // clamped to [5, 20], default 5
-	ViMode       bool
-	LocalOnly    bool // default true — filter results to current directory
+	ExploreBasic        bool
+	SearchLimit         int      // clamped to [5, 20], default 5
+	ViMode              bool
+	LocalOnly           bool     // default true — filter results to current directory
+	SquelchList         []string // additional patterns to squelch (merged with defaults)
+	SquelchClearDefaults bool    // if true, only SquelchList is used (defaults discarded)
 }
 
 // Default returns a Config with default values.
@@ -65,7 +67,8 @@ func Parse(r io.Reader) (Config, error) {
 			continue
 		}
 		key = strings.TrimSpace(key)
-		val = strings.TrimSpace(strings.ToLower(val))
+		rawVal := strings.TrimSpace(val)
+		val = strings.ToLower(rawVal)
 
 		switch key {
 		case "explore-basic":
@@ -74,6 +77,14 @@ func Parse(r io.Reader) (Config, error) {
 			cfg.ViMode = val == "true"
 		case "local-only":
 			cfg.LocalOnly = val != "false"
+		case "squelch-clear-defaults":
+			cfg.SquelchClearDefaults = val == "true"
+		case "squelch":
+			// Repeated keys are supported: each line adds one pattern.
+			// Preserve original case — shell commands are case-sensitive.
+			if rawVal != "" {
+				cfg.SquelchList = append(cfg.SquelchList, rawVal)
+			}
 		case "search-limit":
 			n, err := strconv.Atoi(val)
 			if err != nil {

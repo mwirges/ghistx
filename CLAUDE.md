@@ -15,6 +15,7 @@ internal/util/util.go       FormatRelative(tsMillis int64) string — human-read
 internal/index/index.go     Index subcommand: SHA-256 hash, base64-encode, insert cmdraw + cmdlut rows
 internal/find/find.go       Find subcommand: hybrid ngram+ACS search; Result type with IsGlobal flag
 internal/cat/cat.go         Cat subcommand: ordered history dump with optional CWD filter
+internal/squelch/squelch.go Squelch filtering: DefaultList, Filter(hits, patterns), ActiveList(clearDefaults, user)
 internal/explore/model.go   Bubbletea TUI model (explore + prune modes); cwdFilter threading
 internal/explore/styles.go  Lipgloss style definitions
 internal/explore/tiocsti_unix.go   TIOCSTI injection (//go:build unix)
@@ -61,6 +62,8 @@ CREATE TABLE histxversion (version INTEGER PRIMARY KEY, whence INTEGER);
 | `vi-mode` | bool | `false` | Start explore TUI in vi command mode |
 | `search-limit` | int | `5` | Max results returned (clamped to [5, 20]) |
 | `local-only` | bool | `true` | Restrict searches to current working directory |
+| `squelch` | string (repeated) | — | Add squelch pattern (one per line); prefix `glob:` or `regex:` for non-exact match |
+| `squelch-clear-defaults` | bool | `false` | Discard built-in squelch list; use only user-defined patterns |
 
 CLI flags (not stored in config file):
 
@@ -68,6 +71,7 @@ CLI flags (not stored in config file):
 |------|--------|---------|-------------|
 | `--source` | `user`, `claude`, `all` | `user` | Filter results by command source |
 | `--global` / `-g` | — | — | Bypass CWD filtering for this invocation |
+| `--with-squelch` / `-s` | — | — | Include squelched commands in results |
 
 Example:
 ```

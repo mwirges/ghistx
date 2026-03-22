@@ -16,7 +16,10 @@ import (
 
 	"github.com/mwirges/ghistx/internal/config"
 	"github.com/mwirges/ghistx/internal/find"
+	"github.com/mwirges/ghistx/internal/squelch"
 )
+
+
 
 // Mode controls whether the TUI is in explore or prune mode.
 type Mode int
@@ -40,6 +43,7 @@ type model struct {
 	mode         Mode
 	cwdFilter    string
 	sourceFilter string
+	squelchPatterns []squelch.Pattern // nil means squelching is disabled (--with-squelch)
 	query        string
 	hits         []find.Hit
 	isGlobal     bool // true when last search fell back to global
@@ -51,13 +55,14 @@ type model struct {
 	selection    *find.Hit // set on Enter
 }
 
-func newModel(db *sql.DB, cfg config.Config, mode Mode, cwdFilter, sourceFilter string) model {
+func newModel(db *sql.DB, cfg config.Config, mode Mode, cwdFilter, sourceFilter string, squelchPatterns []squelch.Pattern) model {
 	m := model{
-		db:           db,
-		cfg:          cfg,
-		mode:         mode,
-		cwdFilter:    cwdFilter,
-		sourceFilter: sourceFilter,
+		db:              db,
+		cfg:             cfg,
+		mode:            mode,
+		cwdFilter:       cwdFilter,
+		sourceFilter:    sourceFilter,
+		squelchPatterns: squelchPatterns,
 	}
 	if cfg.ViMode {
 		m.commandMode = true
@@ -94,7 +99,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case searchResultMsg:
 		if msg.err == nil {
-			m.hits = msg.hits
+			m.hits = squelch.Filter(msg.hits, m.squelchPatterns)
 			m.isGlobal = msg.isGlobal
 			// Clamp cursor.
 			if len(m.hits) == 0 {
@@ -305,8 +310,8 @@ func unmarkPrune(db *sql.DB, hash string) error {
 }
 
 // Run launches the bubbletea program and handles post-exit actions.
-func Run(db *sql.DB, cfg config.Config, mode Mode, tmpFile string, cwdFilter, sourceFilter string) error {
-	m := newModel(db, cfg, mode, cwdFilter, sourceFilter)
+func Run(db *sql.DB, cfg config.Config, mode Mode, tmpFile string, cwdFilter, sourceFilter string, squelchPatterns []squelch.Pattern) error {
+	m := newModel(db, cfg, mode, cwdFilter, sourceFilter, squelchPatterns)
 
 	opts := []tea.ProgramOption{tea.WithInputTTY()}
 	p := tea.NewProgram(m, opts...)

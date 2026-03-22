@@ -13,20 +13,22 @@ import (
 
 	"github.com/mwirges/ghistx/internal/cat"
 	"github.com/mwirges/ghistx/internal/config"
+	interndb "github.com/mwirges/ghistx/internal/db"
 	"github.com/mwirges/ghistx/internal/display"
 	"github.com/mwirges/ghistx/internal/explore"
 	"github.com/mwirges/ghistx/internal/find"
 	"github.com/mwirges/ghistx/internal/hashlet"
 	"github.com/mwirges/ghistx/internal/index"
-	interndb "github.com/mwirges/ghistx/internal/db"
+	"github.com/mwirges/ghistx/internal/squelch"
 	"github.com/mwirges/ghistx/internal/util"
 )
 
 type contextKey string
 
 const (
-	keyDB     contextKey = "db"
-	keyConfig contextKey = "config"
+	keyDB              contextKey = "db"
+	keyConfig          contextKey = "config"
+	keySquelchPatterns contextKey = "squelchPatterns"
 )
 
 func main() {
@@ -41,7 +43,9 @@ func main() {
 				Value:   filepath.Join(os.Getenv("HOME"), ".histx.db"),
 				Usage:   "path to the histx SQLite database",
 			},
-			globalFlag, // app-level --global for default action\n\t\t\tsourceFlag, // app-level --source for default action
+			globalFlag,      // app-level --global for default action
+			sourceFlag,      // app-level --source for default action
+			withSquelchFlag, // app-level --with-squelch for default action
 			&cli.StringFlag{
 				Name:   "tmpfile",
 				Usage:  "write resolved command to this file (used by shell integration)",
@@ -59,8 +63,15 @@ func main() {
 				// Non-fatal: fall back to defaults.
 				cfg = config.Default()
 			}
+			// Compile squelch patterns once; emit warnings for invalid patterns.
+			rawList := squelch.ActiveList(cfg.SquelchClearDefaults, cfg.SquelchList)
+			patterns, warnings := squelch.Compile(rawList)
+			for _, w := range warnings {
+				fmt.Fprintln(os.Stderr, "warning:", w)
+			}
 			c.App.Metadata[string(keyDB)] = d
 			c.App.Metadata[string(keyConfig)] = cfg
+			c.App.Metadata[string(keySquelchPatterns)] = patterns
 			return nil
 		},
 		After: func(c *cli.Context) error {
@@ -138,6 +149,25 @@ func resolveSourceFilter(c *cli.Context) string {
 	return c.String("source")
 }
 
+// withSquelchFlag is the shared --with-squelch/-s flag for search subcommands.
+var withSquelchFlag = &cli.BoolFlag{
+	Name:    "with-squelch",
+	Aliases: []string{"s"},
+	Usage:   "include mundane commands that are normally hidden",
+}
+
+// resolveSquelchPatterns returns the compiled squelch patterns from app metadata.
+// Returns nil (no filtering) when --with-squelch is set.
+func resolveSquelchPatterns(c *cli.Context) []squelch.Pattern {
+	if c.Bool("with-squelch") {
+		return nil
+	}
+	if p, ok := c.App.Metadata[string(keySquelchPatterns)].([]squelch.Pattern); ok {
+		return p
+	}
+	return nil
+}
+
 // isHexString returns true if s is a valid hex string of at least 4 characters.
 func isHexString(s string) bool {
 	if len(s) < 4 {
@@ -175,6 +205,7 @@ func runHistory(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	hits = squelch.Filter(hits, resolveSquelchPatterns(c))
 	// Reverse to newest-first.
 	for i, j := 0, len(hits)-1; i < j; i, j = i+1, j-1 {
 		hits[i], hits[j] = hits[j], hits[i]
@@ -300,7 +331,7 @@ func findCmd() *cli.Command {
 		Name:      "find",
 		Usage:     "Search history for matching commands",
 		ArgsUsage: "<keyword> [keyword...]",
-		Flags:     []cli.Flag{globalFlag, sourceFlag},
+		Flags:     []cli.Flag{globalFlag, sourceFlag, withSquelchFlag},
 		Action: func(c *cli.Context) error {
 			d := getDB(c)
 			cfg := getCfg(c)
@@ -315,6 +346,7 @@ func findCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			res.Hits = squelch.Filter(res.Hits, resolveSquelchPatterns(c))
 			if res.IsGlobal && len(res.Hits) > 0 {
 				fmt.Println("── no local results, showing global ──")
 			}
@@ -337,7 +369,7 @@ func catCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "cat",
 		Usage: "Print all history entries ordered oldest-first",
-		Flags: []cli.Flag{globalFlag, sourceFlag},
+		Flags: []cli.Flag{globalFlag, sourceFlag, withSquelchFlag},
 		Action: func(c *cli.Context) error {
 			d := getDB(c)
 			cfg := getCfg(c)
@@ -346,6 +378,7 @@ func catCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			hits = squelch.Filter(hits, resolveSquelchPatterns(c))
 			if cwdFilter != "" {
 				clearCWD(hits)
 			}
@@ -360,7 +393,7 @@ func exploreCmd() *cli.Command {
 		Name:      "explore",
 		Usage:     "Interactively search and select a history entry",
 		ArgsUsage: "[tmpfile]",
-		Flags:     []cli.Flag{globalFlag, sourceFlag},
+		Flags:     []cli.Flag{globalFlag, sourceFlag, withSquelchFlag},
 		Action: func(c *cli.Context) error {
 			d := getDB(c)
 			cfg := getCfg(c)
@@ -370,7 +403,7 @@ func exploreCmd() *cli.Command {
 				tmpFile = c.Args().First()
 			}
 
-			return explore.Run(d, cfg, explore.ModeExplore, tmpFile, resolveCWDFilter(c, cfg), resolveSourceFilter(c))
+			return explore.Run(d, cfg, explore.ModeExplore, tmpFile, resolveCWDFilter(c, cfg), resolveSourceFilter(c), resolveSquelchPatterns(c))
 		},
 	}
 }
@@ -380,11 +413,11 @@ func pruneCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "prune",
 		Usage: "Interactively mark and delete history entries",
-		Flags: []cli.Flag{globalFlag, sourceFlag},
+		Flags: []cli.Flag{globalFlag, sourceFlag, withSquelchFlag},
 		Action: func(c *cli.Context) error {
 			d := getDB(c)
 			cfg := getCfg(c)
-			return explore.Run(d, cfg, explore.ModePrune, "", resolveCWDFilter(c, cfg), resolveSourceFilter(c))
+			return explore.Run(d, cfg, explore.ModePrune, "", resolveCWDFilter(c, cfg), resolveSourceFilter(c), resolveSquelchPatterns(c))
 		},
 	}
 }

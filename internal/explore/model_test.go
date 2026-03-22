@@ -8,11 +8,12 @@ import (
 
 	"github.com/mwirges/ghistx/internal/config"
 	"github.com/mwirges/ghistx/internal/find"
+	"github.com/mwirges/ghistx/internal/squelch"
 )
 
 func makeModel(mode Mode) model {
 	cfg := config.Default()
-	return newModel(nil, cfg, mode, "", "user")
+	return newModel(nil, cfg, mode, "", "user", nil)
 }
 
 func makeModelWithHits(hits []find.Hit) model {
@@ -47,7 +48,7 @@ func TestInitialState(t *testing.T) {
 
 func TestViModeInitialState(t *testing.T) {
 	cfg := config.Config{ViMode: true, SearchLimit: 5, LocalOnly: true}
-	m := newModel(nil, cfg, ModeExplore, "", "user")
+	m := newModel(nil, cfg, ModeExplore, "", "user", nil)
 	if !m.commandMode {
 		t.Error("vi mode: initial commandMode should be true")
 	}
@@ -160,7 +161,7 @@ func TestEscQuits(t *testing.T) {
 
 func TestViModeEscEntersCommandMode(t *testing.T) {
 	cfg := config.Config{ViMode: true, SearchLimit: 5, LocalOnly: true}
-	m := newModel(nil, cfg, ModeExplore, "", "user")
+	m := newModel(nil, cfg, ModeExplore, "", "user", nil)
 	m.commandMode = false // start in insert mode
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
@@ -175,7 +176,7 @@ func TestViModeEscEntersCommandMode(t *testing.T) {
 
 func TestViModeIEntersInsert(t *testing.T) {
 	cfg := config.Config{ViMode: true, SearchLimit: 5, LocalOnly: true}
-	m := newModel(nil, cfg, ModeExplore, "", "user")
+	m := newModel(nil, cfg, ModeExplore, "", "user", nil)
 	// commandMode starts true in vi mode
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
@@ -187,7 +188,7 @@ func TestViModeIEntersInsert(t *testing.T) {
 
 func TestViModeJKNavigation(t *testing.T) {
 	cfg := config.Config{ViMode: true, SearchLimit: 5, LocalOnly: true}
-	m := newModel(nil, cfg, ModeExplore, "", "user")
+	m := newModel(nil, cfg, ModeExplore, "", "user", nil)
 	m.hits = []find.Hit{{Cmd: "cmd1"}, {Cmd: "cmd2"}, {Cmd: "cmd3"}}
 	// vi mode starts in command mode
 
@@ -270,7 +271,7 @@ func TestViewGlobalTag(t *testing.T) {
 
 func TestCWDFilterStoredInModel(t *testing.T) {
 	cfg := config.Default()
-	m := newModel(nil, cfg, ModeExplore, "/home/user/project", "user")
+	m := newModel(nil, cfg, ModeExplore, "/home/user/project", "user", nil)
 	if m.cwdFilter != "/home/user/project" {
 		t.Errorf("cwdFilter = %q, want \"/home/user/project\"", m.cwdFilter)
 	}
@@ -279,9 +280,56 @@ func TestCWDFilterStoredInModel(t *testing.T) {
 func TestSourceFilterStoredInModel(t *testing.T) {
 	cfg := config.Default()
 	for _, src := range []string{"user", "claude", "all"} {
-		m := newModel(nil, cfg, ModeExplore, "", src)
+		m := newModel(nil, cfg, ModeExplore, "", src, nil)
 		if m.sourceFilter != src {
 			t.Errorf("sourceFilter = %q, want %q", m.sourceFilter, src)
+		}
+	}
+}
+
+func TestSquelchPatternsStoredInModel(t *testing.T) {
+	cfg := config.Default()
+	compiled, _ := squelch.Compile([]string{"ls", "cd", "pwd"})
+	m := newModel(nil, cfg, ModeExplore, "", "user", compiled)
+	if len(m.squelchPatterns) != len(compiled) {
+		t.Fatalf("squelchPatterns len = %d, want %d", len(m.squelchPatterns), len(compiled))
+	}
+	for i, p := range compiled {
+		if m.squelchPatterns[i].Raw != p.Raw {
+			t.Errorf("squelchPatterns[%d].Raw = %q, want %q", i, m.squelchPatterns[i].Raw, p.Raw)
+		}
+	}
+}
+
+func TestSquelchPatternsNilMeansNoFilter(t *testing.T) {
+	cfg := config.Default()
+	m := newModel(nil, cfg, ModeExplore, "", "user", nil)
+	if m.squelchPatterns != nil {
+		t.Errorf("expected nil squelchPatterns, got %v", m.squelchPatterns)
+	}
+}
+
+func TestSearchResultMsgSquelchesHits(t *testing.T) {
+	cfg := config.Default()
+	compiled, _ := squelch.Compile([]string{"ls", "cd"})
+	m := newModel(nil, cfg, ModeExplore, "", "user", compiled)
+	m.termWidth = 80
+
+	updated, _ := m.Update(searchResultMsg{
+		hits: []find.Hit{
+			{Cmd: "ls"},
+			{Cmd: "git status"},
+			{Cmd: "cd"},
+			{Cmd: "make test"},
+		},
+	})
+	m = updated.(model)
+	if len(m.hits) != 2 {
+		t.Errorf("expected 2 hits after squelch, got %d: %v", len(m.hits), m.hits)
+	}
+	for _, h := range m.hits {
+		if h.Cmd == "ls" || h.Cmd == "cd" {
+			t.Errorf("squelched command %q appeared in hits", h.Cmd)
 		}
 	}
 }

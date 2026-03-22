@@ -109,6 +109,87 @@ func TestFalseValues(t *testing.T) {
 	}
 }
 
+func TestSquelchRepeatedKeys(t *testing.T) {
+	input := "squelch = make clean\nsquelch = go mod tidy\nsquelch = cd ..\n"
+	cfg, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"make clean", "go mod tidy", "cd .."}
+	if len(cfg.SquelchList) != len(want) {
+		t.Fatalf("SquelchList = %v, want %v", cfg.SquelchList, want)
+	}
+	for i, v := range want {
+		if cfg.SquelchList[i] != v {
+			t.Errorf("SquelchList[%d] = %q, want %q", i, cfg.SquelchList[i], v)
+		}
+	}
+}
+
+func TestSquelchPreservesCase(t *testing.T) {
+	// Pattern values are case-sensitive; must not be lowercased.
+	input := "squelch = Make Clean\nsquelch = GO MOD TIDY\n"
+	cfg, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.SquelchList[0] != "Make Clean" {
+		t.Errorf("SquelchList[0] = %q, want \"Make Clean\"", cfg.SquelchList[0])
+	}
+	if cfg.SquelchList[1] != "GO MOD TIDY" {
+		t.Errorf("SquelchList[1] = %q, want \"GO MOD TIDY\"", cfg.SquelchList[1])
+	}
+}
+
+func TestSquelchEmptyValue(t *testing.T) {
+	// A blank squelch value should be ignored.
+	input := "squelch = \nsquelch = make clean\n"
+	cfg, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.SquelchList) != 1 || cfg.SquelchList[0] != "make clean" {
+		t.Errorf("SquelchList = %v, want [make clean]", cfg.SquelchList)
+	}
+}
+
+func TestSquelchClearDefaults(t *testing.T) {
+	// Default is false.
+	cfg, err := Parse(strings.NewReader(""))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.SquelchClearDefaults {
+		t.Error("default SquelchClearDefaults should be false")
+	}
+
+	cfg, err = Parse(strings.NewReader("squelch-clear-defaults = true\n"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.SquelchClearDefaults {
+		t.Error("SquelchClearDefaults should be true")
+	}
+
+	cfg, err = Parse(strings.NewReader("squelch-clear-defaults = false\n"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.SquelchClearDefaults {
+		t.Error("SquelchClearDefaults should be false")
+	}
+}
+
+func TestSquelchNoEntries(t *testing.T) {
+	cfg, err := Parse(strings.NewReader("search-limit = 7\n"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.SquelchList) != 0 {
+		t.Errorf("expected empty SquelchList, got %v", cfg.SquelchList)
+	}
+}
+
 func TestLocalOnly(t *testing.T) {
 	// Default is true.
 	cfg, err := Parse(strings.NewReader(""))

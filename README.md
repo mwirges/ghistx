@@ -231,6 +231,45 @@ explore-basic = false   # skip TIOCSTI; print selection to stdout (default: fals
 vi-mode       = false   # start explore TUI in vi command mode (default: false)
 ```
 
+### Squelching mundane commands
+
+By default, common low-signal commands (`ls`, `cd`, `pwd`, `clear`, etc.) are hidden from all output. Use `--with-squelch` / `-s` on any command to see them:
+
+```sh
+ghistx -s              # default history view, squelched commands included
+ghistx find -s ls      # find results including squelched matches
+ghistx cat -s          # full dump including mundane commands
+```
+
+To add your own patterns, use one `squelch =` line per pattern. Three pattern types are supported:
+
+```
+# ~/.histx
+
+# Exact match (default — no prefix)
+squelch = make clean
+squelch = go mod tidy
+
+# Glob pattern (filepath-style: *, ?, [...])
+squelch = glob:git diff *
+squelch = glob:kubectl get *
+
+# Regular expression
+squelch = regex:^echo\s
+squelch = regex:^cd\s
+```
+
+Invalid regex or glob patterns emit a warning at startup and are skipped. To discard the built-in defaults and use only your own list:
+
+```
+# ~/.histx
+squelch-clear-defaults = true
+squelch = make clean
+squelch = glob:git diff *
+```
+
+> **Note on glob and `/`**: `filepath.Match` treats `/` as a path separator, so `*` does not match it. `glob:ls *` matches `ls -la` but not `ls /tmp`. Use `regex:` if you need to match across slashes.
+
 ## Claude Code Integration
 
 `ghistx` can record every shell command that Claude Code executes via its hook system. Indexed Claude commands are visually distinguished (tagged `[claude]` in output and `[c]` in the TUI) while remaining fully searchable alongside your regular shell history.
