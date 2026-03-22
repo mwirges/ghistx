@@ -45,7 +45,7 @@ func TestFindExactMatch(t *testing.T) {
 		time.Sleep(2 * time.Millisecond) // ensure distinct timestamps
 	}
 
-	res, err := Cmd(d, []string{"git", "status"}, 5, "")
+	res, err := Cmd(d, []string{"git", "status"}, 5, "", "user")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestFindShortKeywordACS(t *testing.T) {
 	}
 
 	// "ls" is 2 chars -> triggers ACS path
-	res, err := Cmd(d, []string{"ls"}, 5, "")
+	res, err := Cmd(d, []string{"ls"}, 5, "", "user")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestFindNoResults(t *testing.T) {
 		t.Fatalf("index.Cmd: %v", err)
 	}
 
-	res, err := Cmd(d, []string{"zzznomatch"}, 5, "")
+	res, err := Cmd(d, []string{"zzznomatch"}, 5, "", "user")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestFindEmptyKeywords(t *testing.T) {
 		t.Fatalf("index.Cmd: %v", err)
 	}
 
-	res, err := Cmd(d, []string{""}, 5, "")
+	res, err := Cmd(d, []string{""}, 5, "", "user")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestFindLimit(t *testing.T) {
 		time.Sleep(1 * time.Millisecond)
 	}
 
-	res, err := Cmd(d, []string{"testing"}, 3, "")
+	res, err := Cmd(d, []string{"testing"}, 3, "", "user")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestFindCWDDecoded(t *testing.T) {
 		t.Fatalf("index.Cmd: %v", err)
 	}
 
-	res, err := Cmd(d, []string{"make"}, 5, "")
+	res, err := Cmd(d, []string{"make"}, 5, "", "user")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestFindCWDFilterLocalMatch(t *testing.T) {
 		t.Fatalf("index.Cmd: %v", err)
 	}
 
-	res, err := Cmd(d, []string{"make"}, 5, "/home/user/project")
+	res, err := Cmd(d, []string{"make"}, 5, "/home/user/project", "user")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestFindCWDFilterNoLocalFallsBack(t *testing.T) {
 	}
 
 	// Search from a different directory — no local match.
-	res, err := Cmd(d, []string{"make"}, 5, "/tmp")
+	res, err := Cmd(d, []string{"make"}, 5, "/tmp", "user")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestFindCWDFilterGlobalOverride(t *testing.T) {
 	}
 
 	// Empty cwdFilter = global (no filtering).
-	res, err := Cmd(d, []string{"make"}, 5, "")
+	res, err := Cmd(d, []string{"make"}, 5, "", "user")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -261,4 +261,130 @@ func TestFindCWDFilterGlobalOverride(t *testing.T) {
 	if res.IsGlobal {
 		t.Error("IsGlobal should be false when cwdFilter is empty")
 	}
+}
+
+func TestFindSourceFilterUser(t *testing.T) {
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	defer d.Close()
+	if err := index.Cmd(d, "git status", "/"); err != nil {
+		t.Fatalf("index user: %v", err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if err := index.Cmd(d, "kubectl apply", "/", "claude"); err != nil {
+		t.Fatalf("index claude: %v", err)
+	}
+
+	// "user" filter should only return the shell-indexed command.
+	res, err := Cmd(d, []string{"git"}, 5, "", "user")
+	if err != nil {
+		t.Fatalf("Cmd: %v", err)
+	}
+	if len(res.Hits) != 1 || res.Hits[0].Cmd != "git status" {
+		t.Errorf("user filter: got %v, want [git status]", hitCmds(res.Hits))
+	}
+	for _, h := range res.Hits {
+		if h.Source == "claude" {
+			t.Error("user filter returned a claude-sourced command")
+		}
+	}
+}
+
+func TestFindSourceFilterClaude(t *testing.T) {
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	defer d.Close()
+	if err := index.Cmd(d, "git status", "/"); err != nil {
+		t.Fatalf("index user: %v", err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if err := index.Cmd(d, "kubectl apply", "/", "claude"); err != nil {
+		t.Fatalf("index claude: %v", err)
+	}
+
+	res, err := Cmd(d, []string{"kubectl"}, 5, "", "claude")
+	if err != nil {
+		t.Fatalf("Cmd: %v", err)
+	}
+	if len(res.Hits) != 1 || res.Hits[0].Cmd != "kubectl apply" {
+		t.Errorf("claude filter: got %v, want [kubectl apply]", hitCmds(res.Hits))
+	}
+	if res.Hits[0].Source != "claude" {
+		t.Errorf("Source = %q, want \"claude\"", res.Hits[0].Source)
+	}
+}
+
+func TestFindSourceFilterAll(t *testing.T) {
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	defer d.Close()
+	if err := index.Cmd(d, "make test", "/"); err != nil {
+		t.Fatalf("index user: %v", err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if err := index.Cmd(d, "make build", "/", "claude"); err != nil {
+		t.Fatalf("index claude: %v", err)
+	}
+
+	res, err := Cmd(d, []string{"make"}, 5, "", "all")
+	if err != nil {
+		t.Fatalf("Cmd: %v", err)
+	}
+	if len(res.Hits) != 2 {
+		t.Errorf("all filter: got %d hits, want 2", len(res.Hits))
+	}
+}
+
+func TestFindSourceFilterUserExcludesClaude(t *testing.T) {
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	defer d.Close()
+	if err := index.Cmd(d, "make build", "/", "claude"); err != nil {
+		t.Fatalf("index claude: %v", err)
+	}
+
+	// Only a claude command exists; user filter should return nothing.
+	res, err := Cmd(d, []string{"make"}, 5, "", "user")
+	if err != nil {
+		t.Fatalf("Cmd: %v", err)
+	}
+	if len(res.Hits) != 0 {
+		t.Errorf("user filter returned claude command: %v", hitCmds(res.Hits))
+	}
+}
+
+func TestFindSourceFilterClaudeExcludesUser(t *testing.T) {
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	defer d.Close()
+	if err := index.Cmd(d, "make build", "/"); err != nil {
+		t.Fatalf("index user: %v", err)
+	}
+
+	// Only a user command exists; claude filter should return nothing.
+	res, err := Cmd(d, []string{"make"}, 5, "", "claude")
+	if err != nil {
+		t.Fatalf("Cmd: %v", err)
+	}
+	if len(res.Hits) != 0 {
+		t.Errorf("claude filter returned user command: %v", hitCmds(res.Hits))
+	}
+}
+
+func hitCmds(hits []Hit) []string {
+	out := make([]string, len(hits))
+	for i, h := range hits {
+		out[i] = h.Cmd
+	}
+	return out
 }

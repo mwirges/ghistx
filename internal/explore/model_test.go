@@ -12,7 +12,7 @@ import (
 
 func makeModel(mode Mode) model {
 	cfg := config.Default()
-	return newModel(nil, cfg, mode, "")
+	return newModel(nil, cfg, mode, "", "user")
 }
 
 func makeModelWithHits(hits []find.Hit) model {
@@ -47,7 +47,7 @@ func TestInitialState(t *testing.T) {
 
 func TestViModeInitialState(t *testing.T) {
 	cfg := config.Config{ViMode: true, SearchLimit: 5, LocalOnly: true}
-	m := newModel(nil, cfg, ModeExplore, "")
+	m := newModel(nil, cfg, ModeExplore, "", "user")
 	if !m.commandMode {
 		t.Error("vi mode: initial commandMode should be true")
 	}
@@ -160,7 +160,7 @@ func TestEscQuits(t *testing.T) {
 
 func TestViModeEscEntersCommandMode(t *testing.T) {
 	cfg := config.Config{ViMode: true, SearchLimit: 5, LocalOnly: true}
-	m := newModel(nil, cfg, ModeExplore, "")
+	m := newModel(nil, cfg, ModeExplore, "", "user")
 	m.commandMode = false // start in insert mode
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
@@ -175,7 +175,7 @@ func TestViModeEscEntersCommandMode(t *testing.T) {
 
 func TestViModeIEntersInsert(t *testing.T) {
 	cfg := config.Config{ViMode: true, SearchLimit: 5, LocalOnly: true}
-	m := newModel(nil, cfg, ModeExplore, "")
+	m := newModel(nil, cfg, ModeExplore, "", "user")
 	// commandMode starts true in vi mode
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
@@ -187,7 +187,7 @@ func TestViModeIEntersInsert(t *testing.T) {
 
 func TestViModeJKNavigation(t *testing.T) {
 	cfg := config.Config{ViMode: true, SearchLimit: 5, LocalOnly: true}
-	m := newModel(nil, cfg, ModeExplore, "")
+	m := newModel(nil, cfg, ModeExplore, "", "user")
 	m.hits = []find.Hit{{Cmd: "cmd1"}, {Cmd: "cmd2"}, {Cmd: "cmd3"}}
 	// vi mode starts in command mode
 
@@ -270,9 +270,19 @@ func TestViewGlobalTag(t *testing.T) {
 
 func TestCWDFilterStoredInModel(t *testing.T) {
 	cfg := config.Default()
-	m := newModel(nil, cfg, ModeExplore, "/home/user/project")
+	m := newModel(nil, cfg, ModeExplore, "/home/user/project", "user")
 	if m.cwdFilter != "/home/user/project" {
 		t.Errorf("cwdFilter = %q, want \"/home/user/project\"", m.cwdFilter)
+	}
+}
+
+func TestSourceFilterStoredInModel(t *testing.T) {
+	cfg := config.Default()
+	for _, src := range []string{"user", "claude", "all"} {
+		m := newModel(nil, cfg, ModeExplore, "", src)
+		if m.sourceFilter != src {
+			t.Errorf("sourceFilter = %q, want %q", m.sourceFilter, src)
+		}
 	}
 }
 

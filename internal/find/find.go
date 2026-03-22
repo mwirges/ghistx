@@ -24,6 +24,7 @@ type Hit struct {
 	CWD            string // decoded from base64, may be empty
 	TS             int64  // milliseconds since epoch
 	AnnotationType int    // 0=normal, 1=prune-marked
+	Source         string // e.g. "claude"; empty for regular shell commands
 }
 
 // Result carries search hits plus a flag indicating whether a CWD-local
@@ -40,28 +41,32 @@ type Result struct {
 // all results are returned (global search). When non-empty and no local results
 // are found, the search automatically falls back to global history and
 // Result.IsGlobal is set to true.
-func Cmd(db *sql.DB, keywords []string, limit int, cwdFilter string) (Result, error) {
+// Cmd searches the database for commands matching the given keywords.
+// cwdFilter restricts results to a specific directory (raw path); empty = global.
+// sourceFilter controls which commands are shown: "user" (default, no source tag),
+// "claude", or "all" (no filter).
+func Cmd(db *sql.DB, keywords []string, limit int, cwdFilter, sourceFilter string) (Result, error) {
 	if limit <= 0 {
 		limit = 5
 	}
 
 	if cwdFilter != "" {
-		hits, err := search(db, keywords, limit, cwdFilter)
+		hits, err := search(db, keywords, limit, cwdFilter, sourceFilter)
 		if err != nil || len(hits) > 0 {
 			return Result{Hits: hits}, err
 		}
 		// No local results — fall back to global.
-		hits, err = search(db, keywords, limit, "")
+		hits, err = search(db, keywords, limit, "", sourceFilter)
 		return Result{Hits: hits, IsGlobal: true}, err
 	}
 
-	hits, err := search(db, keywords, limit, "")
+	hits, err := search(db, keywords, limit, "", sourceFilter)
 	return Result{Hits: hits}, err
 }
 
 // search is the internal routing layer: it chooses ngram vs ACS path and
-// applies the optional CWD filter.
-func search(db *sql.DB, keywords []string, limit int, cwdFilter string) ([]Hit, error) {
+// applies the optional CWD and source filters.
+func search(db *sql.DB, keywords []string, limit int, cwdFilter, sourceFilter string) ([]Hit, error) {
 	universe := true
 	allEmpty := true
 	for _, kw := range keywords {
@@ -78,23 +83,23 @@ func search(db *sql.DB, keywords []string, limit int, cwdFilter string) ([]Hit, 
 	}
 
 	if universe {
-		return acsSearch(db, keywords, limit, cwdFilter)
+		return acsSearch(db, keywords, limit, cwdFilter, sourceFilter)
 	}
 
-	hits, err := ngramSearch(db, keywords, limit, cwdFilter)
+	hits, err := ngramSearch(db, keywords, limit, cwdFilter, sourceFilter)
 	if err != nil {
 		return nil, err
 	}
 	// If ngram search returned no results, fall back to ACS (handles ≤2-char
 	// keywords that were mixed in with long keywords but had no ngram hits).
 	if len(hits) == 0 {
-		return acsSearch(db, keywords, limit, cwdFilter)
+		return acsSearch(db, keywords, limit, cwdFilter, sourceFilter)
 	}
 	return hits, nil
 }
 
 // ngramSearch uses the cmdlut index for keywords longer than 2 characters.
-func ngramSearch(db *sql.DB, keywords []string, limit int, cwdFilter string) ([]Hit, error) {
+func ngramSearch(db *sql.DB, keywords []string, limit int, cwdFilter, sourceFilter string) ([]Hit, error) {
 	// Collect all n-grams from all keywords.
 	var grams []uint32
 	for _, kw := range keywords {
@@ -112,10 +117,12 @@ func ngramSearch(db *sql.DB, keywords []string, limit int, cwdFilter string) ([]
 
 	query := fmt.Sprintf(`
 		SELECT l.hash, COUNT(l.hash) AS rank, r.cmd, r.ts,
-		       COALESCE(a.type, 0) AS atype, r.cwd
+		       COALESCE(a.type, 0) AS atype, r.cwd,
+		       COALESCE(m.value, '') AS source
 		FROM cmdlut AS l
 		INNER JOIN cmdraw AS r ON l.hash = r.hash
 		LEFT OUTER JOIN cmdan AS a ON r.hash = a.hash
+		LEFT OUTER JOIN cmdmeta AS m ON r.hash = m.hash AND m.key = 'source'
 		WHERE l.ngram IN (%s)
 	`, placeholders)
 
@@ -128,6 +135,14 @@ func ngramSearch(db *sql.DB, keywords []string, limit int, cwdFilter string) ([]
 		b64filter := base64.StdEncoding.EncodeToString([]byte(cwdFilter))
 		query += " AND r.cwd = ?"
 		args = append(args, b64filter)
+	}
+	switch sourceFilter {
+	case "all":
+		// no filter
+	case "claude":
+		query += " AND COALESCE(m.value, '') = 'claude'"
+	default: // "user" or ""
+		query += " AND COALESCE(m.value, '') = ''"
 	}
 
 	query += fmt.Sprintf(`
@@ -146,7 +161,7 @@ func ngramSearch(db *sql.DB, keywords []string, limit int, cwdFilter string) ([]
 }
 
 // acsSearch performs a full table scan using Aho-Corasick string matching.
-func acsSearch(db *sql.DB, keywords []string, limit int, cwdFilter string) ([]Hit, error) {
+func acsSearch(db *sql.DB, keywords []string, limit int, cwdFilter, sourceFilter string) ([]Hit, error) {
 	strs := keywordsToStrings(keywords)
 	var matcher *ahocorasick.Matcher
 	if len(strs) > 0 {
@@ -154,15 +169,29 @@ func acsSearch(db *sql.DB, keywords []string, limit int, cwdFilter string) ([]Hi
 	}
 
 	query := `
-		SELECT r.hash, r.cmd, r.ts, COALESCE(a.type, 0) AS atype, r.cwd
+		SELECT r.hash, r.cmd, r.ts, COALESCE(a.type, 0) AS atype, r.cwd,
+		       COALESCE(m.value, '') AS source
 		FROM cmdraw AS r
-		LEFT OUTER JOIN cmdan AS a ON r.hash = a.hash`
+		LEFT OUTER JOIN cmdan AS a ON r.hash = a.hash
+		LEFT OUTER JOIN cmdmeta AS m ON r.hash = m.hash AND m.key = 'source'`
 
 	var args []any
+	var conditions []string
 	if cwdFilter != "" {
 		b64filter := base64.StdEncoding.EncodeToString([]byte(cwdFilter))
-		query += " WHERE r.cwd = ?"
+		conditions = append(conditions, "r.cwd = ?")
 		args = append(args, b64filter)
+	}
+	switch sourceFilter {
+	case "all":
+		// no filter
+	case "claude":
+		conditions = append(conditions, "COALESCE(m.value, '') = 'claude'")
+	default: // "user" or ""
+		conditions = append(conditions, "COALESCE(m.value, '') = ''")
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
 	query += " ORDER BY r.ts DESC"
 
@@ -174,11 +203,11 @@ func acsSearch(db *sql.DB, keywords []string, limit int, cwdFilter string) ([]Hi
 
 	var hits []Hit
 	for rows.Next() {
-		var hash, b64cmd string
+		var hash, b64cmd, source string
 		var b64cwd sql.NullString
 		var ts int64
 		var atype int
-		if err := rows.Scan(&hash, &b64cmd, &ts, &atype, &b64cwd); err != nil {
+		if err := rows.Scan(&hash, &b64cmd, &ts, &atype, &b64cwd, &source); err != nil {
 			return nil, fmt.Errorf("find: acs scan: %w", err)
 		}
 		cmd, err := base64.StdEncoding.DecodeString(b64cmd)
@@ -207,6 +236,7 @@ func acsSearch(db *sql.DB, keywords []string, limit int, cwdFilter string) ([]Hi
 			CWD:            cwd,
 			TS:             ts,
 			AnnotationType: atype,
+			Source:         source,
 		})
 		if len(hits) >= limit {
 			break
@@ -229,12 +259,12 @@ func keywordsToStrings(kws []string) []string {
 func scanHits(rows *sql.Rows) ([]Hit, error) {
 	var hits []Hit
 	for rows.Next() {
-		var hash, b64cmd string
+		var hash, b64cmd, source string
 		var rank int
 		var b64cwd sql.NullString
 		var ts int64
 		var atype int
-		if err := rows.Scan(&hash, &rank, &b64cmd, &ts, &atype, &b64cwd); err != nil {
+		if err := rows.Scan(&hash, &rank, &b64cmd, &ts, &atype, &b64cwd, &source); err != nil {
 			return nil, fmt.Errorf("find: scan row: %w", err)
 		}
 
@@ -255,6 +285,7 @@ func scanHits(rows *sql.Rows) ([]Hit, error) {
 			CWD:            cwd,
 			TS:             ts,
 			AnnotationType: atype,
+			Source:         source,
 		})
 	}
 	return hits, rows.Err()

@@ -30,6 +30,16 @@ ghistx prune              # interactive TUI to mark and delete entries
 
 Add `--global` / `-g` to any command to search across all directories instead of just the current one.
 
+By default, only commands indexed from your shell are shown. Use `--source` to change this:
+
+```
+ghistx --source claude    # show only Claude Code commands
+ghistx --source all       # show everything
+ghistx --source user      # show only shell commands (default)
+```
+
+`--source` works with all subcommands: `find`, `cat`, `explore`, `prune`, and the default history view.
+
 ### Hashlets
 
 Every indexed command is identified by the first few characters of its SHA-256 hash — just enough to be unambiguous within the current result set (minimum 4 characters, like git short SHAs). They appear at the start of each output line:
@@ -220,6 +230,65 @@ search-limit  = 5       # max results for find/explore (range: 5–20, default: 
 explore-basic = false   # skip TIOCSTI; print selection to stdout (default: false)
 vi-mode       = false   # start explore TUI in vi command mode (default: false)
 ```
+
+## Claude Code Integration
+
+`ghistx` can record every shell command that Claude Code executes via its hook system. Indexed Claude commands are visually distinguished (tagged `[claude]` in output and `[c]` in the TUI) while remaining fully searchable alongside your regular shell history.
+
+### How it works
+
+A `PostToolUse` hook fires after every `Bash` tool call. The hook script reads the command and working directory from the JSON payload and calls `ghistx index --source claude --cwd <dir>`.
+
+### Setup
+
+**1. Create the hook script** at `~/.claude/hooks/ghistx-index.sh`:
+
+```sh
+#!/bin/sh
+# Index Claude Code Bash tool calls into ghistx.
+# Reads JSON from stdin: {"tool_input": {"command": "..."}, "cwd": "..."}
+json=$(cat)
+cmd=$(printf '%s' "$json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['tool_input']['command'])" 2>/dev/null)
+cwd=$(printf '%s' "$json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('cwd',''))" 2>/dev/null)
+[ -z "$cmd" ] && exit 0
+exec ghistx index --source claude --cwd "$cwd" -- "$cmd"
+```
+
+Make it executable:
+
+```sh
+chmod +x ~/.claude/hooks/ghistx-index.sh
+```
+
+**2. Register the hook** in `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/ghistx-index.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+After restarting Claude Code, every Bash command it runs will appear in your history tagged with its source:
+
+```
+$ ghistx find deploy
+a3f1  [claude] [2 minutes ago]  kubectl apply -f deploy.yaml
+b204  [1 hour ago]              git push origin main
+```
+
+The `[claude]` tag appears only in output — the command text itself is stored and searched identically to shell-indexed commands. CWD filtering and `--global` work the same way.
 
 ## Compatibility
 

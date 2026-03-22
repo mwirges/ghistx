@@ -62,6 +62,13 @@ CREATE TABLE histxversion (version INTEGER PRIMARY KEY, whence INTEGER);
 | `search-limit` | int | `5` | Max results returned (clamped to [5, 20]) |
 | `local-only` | bool | `true` | Restrict searches to current working directory |
 
+CLI flags (not stored in config file):
+
+| Flag | Values | Default | Description |
+|------|--------|---------|-------------|
+| `--source` | `user`, `claude`, `all` | `user` | Filter results by command source |
+| `--global` / `-g` | — | — | Bypass CWD filtering for this invocation |
+
 Example:
 ```
 local-only = false

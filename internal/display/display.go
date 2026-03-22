@@ -19,6 +19,7 @@ import (
 
 type styles struct {
 	hashlet   lipgloss.Style
+	source    lipgloss.Style
 	timestamp lipgloss.Style
 	command   lipgloss.Style
 	cwd       lipgloss.Style
@@ -26,7 +27,8 @@ type styles struct {
 
 func newStyles(r *lipgloss.Renderer) styles {
 	return styles{
-		hashlet:   r.NewStyle().Foreground(lipgloss.Color("3")), // yellow
+		hashlet:   r.NewStyle().Foreground(lipgloss.Color("3")),          // yellow
+		source:    r.NewStyle().Foreground(lipgloss.Color("4")).Faint(true), // blue/dim
 		timestamp: r.NewStyle().Faint(true),
 		command:   r.NewStyle().Bold(true),
 		cwd:       r.NewStyle().Faint(true),
@@ -51,8 +53,11 @@ func Render(hits []find.Hit, colorRef io.Writer) string {
 	var sb strings.Builder
 	for _, h := range hits {
 		when := util.FormatRelative(h.TS)
-		line := s.hashlet.Render(h.Hash[:prefixLen]) + " " +
-			s.timestamp.Render("["+when+"]") + " " +
+		line := s.hashlet.Render(h.Hash[:prefixLen]) + " "
+		if h.Source != "" {
+			line += s.source.Render("["+h.Source+"]") + " "
+		}
+		line += s.timestamp.Render("["+when+"]") + " " +
 			s.command.Render(h.Cmd)
 		if h.CWD != "" {
 			line += " " + s.cwd.Render("("+h.CWD+")")

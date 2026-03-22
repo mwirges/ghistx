@@ -53,8 +53,11 @@ func FindByPrefix(db *sql.DB, prefix string) (find.Hit, error) {
 		}
 	}
 
-	rows, err := db.Query(
-		`SELECT hash, ts, cmd, cwd FROM cmdraw WHERE hash LIKE ? LIMIT 3`,
+	rows, err := db.Query(`
+		SELECT r.hash, r.ts, r.cmd, r.cwd, COALESCE(m.value, '') AS source
+		FROM cmdraw r
+		LEFT OUTER JOIN cmdmeta m ON r.hash = m.hash AND m.key = 'source'
+		WHERE r.hash LIKE ? LIMIT 3`,
 		prefix+"%",
 	)
 	if err != nil {
@@ -64,10 +67,10 @@ func FindByPrefix(db *sql.DB, prefix string) (find.Hit, error) {
 
 	var results []find.Hit
 	for rows.Next() {
-		var hash, b64cmd string
+		var hash, b64cmd, source string
 		var b64cwd sql.NullString
 		var ts int64
-		if err := rows.Scan(&hash, &ts, &b64cmd, &b64cwd); err != nil {
+		if err := rows.Scan(&hash, &ts, &b64cmd, &b64cwd, &source); err != nil {
 			return find.Hit{}, fmt.Errorf("hashlet: scan: %w", err)
 		}
 		cmd, err := base64.StdEncoding.DecodeString(b64cmd)
@@ -82,10 +85,11 @@ func FindByPrefix(db *sql.DB, prefix string) (find.Hit, error) {
 			}
 		}
 		results = append(results, find.Hit{
-			Hash: hash,
-			Cmd:  string(cmd),
-			CWD:  cwd,
-			TS:   ts,
+			Hash:   hash,
+			Cmd:    string(cmd),
+			CWD:    cwd,
+			TS:     ts,
+			Source: source,
 		})
 	}
 	if err := rows.Err(); err != nil {

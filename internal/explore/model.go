@@ -35,27 +35,29 @@ type searchResultMsg struct {
 
 // model is the bubbletea model for the explore/prune TUI.
 type model struct {
-	db          *sql.DB
-	cfg         config.Config
-	mode        Mode
-	cwdFilter   string
-	query       string
-	hits        []find.Hit
-	isGlobal    bool // true when last search fell back to global
-	cursor      int
-	commandMode bool // vi command mode
-	termWidth   int
-	termHeight  int
-	done        bool
-	selection   *find.Hit // set on Enter
+	db           *sql.DB
+	cfg          config.Config
+	mode         Mode
+	cwdFilter    string
+	sourceFilter string
+	query        string
+	hits         []find.Hit
+	isGlobal     bool // true when last search fell back to global
+	cursor       int
+	commandMode  bool // vi command mode
+	termWidth    int
+	termHeight   int
+	done         bool
+	selection    *find.Hit // set on Enter
 }
 
-func newModel(db *sql.DB, cfg config.Config, mode Mode, cwdFilter string) model {
+func newModel(db *sql.DB, cfg config.Config, mode Mode, cwdFilter, sourceFilter string) model {
 	m := model{
-		db:        db,
-		cfg:       cfg,
-		mode:      mode,
-		cwdFilter: cwdFilter,
+		db:           db,
+		cfg:          cfg,
+		mode:         mode,
+		cwdFilter:    cwdFilter,
+		sourceFilter: sourceFilter,
 	}
 	if cfg.ViMode {
 		m.commandMode = true
@@ -67,16 +69,16 @@ func newModel(db *sql.DB, cfg config.Config, mode Mode, cwdFilter string) model 
 func (m model) Init() tea.Cmd {
 	return tea.Batch(
 		tea.EnterAltScreen,
-		doSearch(m.db, []string{}, m.cfg.SearchLimit, m.cwdFilter),
+		doSearch(m.db, []string{}, m.cfg.SearchLimit, m.cwdFilter, m.sourceFilter),
 	)
 }
 
-func doSearch(db *sql.DB, keywords []string, limit int, cwdFilter string) tea.Cmd {
+func doSearch(db *sql.DB, keywords []string, limit int, cwdFilter, sourceFilter string) tea.Cmd {
 	return func() tea.Msg {
 		if db == nil {
 			return searchResultMsg{}
 		}
-		res, err := find.Cmd(db, keywords, limit, cwdFilter)
+		res, err := find.Cmd(db, keywords, limit, cwdFilter, sourceFilter)
 		return searchResultMsg{hits: res.Hits, isGlobal: res.IsGlobal, err: err}
 	}
 }
@@ -158,7 +160,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if h.AnnotationType != 1 {
 					_ = markPrune(m.db, h.Hash)
 				}
-				return m, doSearch(m.db, splitQuery(m.query), m.cfg.SearchLimit, m.cwdFilter)
+				return m, doSearch(m.db, splitQuery(m.query), m.cfg.SearchLimit, m.cwdFilter, m.sourceFilter)
 			}
 		}
 		if key == "left" {
@@ -167,7 +169,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if h.AnnotationType == 1 {
 					_ = unmarkPrune(m.db, h.Hash)
 				}
-				return m, doSearch(m.db, splitQuery(m.query), m.cfg.SearchLimit, m.cwdFilter)
+				return m, doSearch(m.db, splitQuery(m.query), m.cfg.SearchLimit, m.cwdFilter, m.sourceFilter)
 			}
 		}
 	}
@@ -200,7 +202,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.cursor = 0
-		return m, doSearch(m.db, splitQuery(m.query), m.cfg.SearchLimit, m.cwdFilter)
+		return m, doSearch(m.db, splitQuery(m.query), m.cfg.SearchLimit, m.cwdFilter, m.sourceFilter)
 	}
 
 	return m, nil
@@ -233,7 +235,11 @@ func (m model) View() string {
 			continue
 		}
 		h := m.hits[i]
-		text := truncate(h.Cmd, h.CWD, m.termWidth)
+		tag := ""
+		if h.Source != "" {
+			tag = "[" + h.Source[:1] + "] " // e.g. "[c] " for "claude"
+		}
+		text := tag + truncate(h.Cmd, h.CWD, m.termWidth)
 		line := renderLine(text, h.AnnotationType == 1, i == m.cursor)
 		b.WriteString(line + "\n")
 	}
@@ -299,8 +305,8 @@ func unmarkPrune(db *sql.DB, hash string) error {
 }
 
 // Run launches the bubbletea program and handles post-exit actions.
-func Run(db *sql.DB, cfg config.Config, mode Mode, tmpFile string, cwdFilter string) error {
-	m := newModel(db, cfg, mode, cwdFilter)
+func Run(db *sql.DB, cfg config.Config, mode Mode, tmpFile string, cwdFilter, sourceFilter string) error {
+	m := newModel(db, cfg, mode, cwdFilter, sourceFilter)
 
 	opts := []tea.ProgramOption{tea.WithInputTTY()}
 	p := tea.NewProgram(m, opts...)

@@ -41,7 +41,7 @@ func main() {
 				Value:   filepath.Join(os.Getenv("HOME"), ".histx.db"),
 				Usage:   "path to the histx SQLite database",
 			},
-			globalFlag, // app-level --global for default action
+			globalFlag, // app-level --global for default action\n\t\t\tsourceFlag, // app-level --source for default action
 			&cli.StringFlag{
 				Name:   "tmpfile",
 				Usage:  "write resolved command to this file (used by shell integration)",
@@ -126,6 +126,18 @@ var globalFlag = &cli.BoolFlag{
 	Usage:   "search all directories, not just the current one",
 }
 
+// sourceFlag is the shared --source flag added to search subcommands.
+var sourceFlag = &cli.StringFlag{
+	Name:  "source",
+	Usage: "filter by command source: user (default), claude, or all",
+	Value: "user",
+}
+
+// resolveSourceFilter returns the source filter string from the --source flag.
+func resolveSourceFilter(c *cli.Context) string {
+	return c.String("source")
+}
+
 // isHexString returns true if s is a valid hex string of at least 4 characters.
 func isHexString(s string) bool {
 	if len(s) < 4 {
@@ -159,7 +171,7 @@ func runHistory(c *cli.Context) error {
 	d := getDB(c)
 	cfg := getCfg(c)
 	cwdFilter := resolveCWDFilter(c, cfg)
-	hits, err := cat.Cmd(d, cwdFilter)
+	hits, err := cat.Cmd(d, cwdFilter, resolveSourceFilter(c))
 	if err != nil {
 		return err
 	}
@@ -230,6 +242,7 @@ func runHashlet(c *cli.Context, prefix string) error {
 //
 //	ghistx index "git status"
 //	echo "git status" | ghistx index -
+//	ghistx index --source claude --cwd /some/path "git status"
 func indexCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "index",
@@ -240,10 +253,22 @@ func indexCmd() *cli.Command {
 				Aliases: []string{"s"},
 				Usage:   "read commands from stdin (one per line)",
 			},
+			&cli.StringFlag{
+				Name:  "source",
+				Usage: "tag the command with a source label (e.g. 'claude')",
+			},
+			&cli.StringFlag{
+				Name:  "cwd",
+				Usage: "override the working directory recorded with the command",
+			},
 		},
 		Action: func(c *cli.Context) error {
 			d := getDB(c)
-			cwd, _ := os.Getwd()
+			cwd := c.String("cwd")
+			if cwd == "" {
+				cwd, _ = os.Getwd()
+			}
+			source := c.String("source")
 
 			if c.Bool("stdin") || (c.NArg() == 1 && c.Args().First() == "-") {
 				scanner := bufio.NewScanner(os.Stdin)
@@ -252,7 +277,7 @@ func indexCmd() *cli.Command {
 					if line == "" {
 						continue
 					}
-					if err := index.Cmd(d, line, cwd); err != nil {
+					if err := index.Cmd(d, line, cwd, source); err != nil {
 						return err
 					}
 				}
@@ -264,7 +289,7 @@ func indexCmd() *cli.Command {
 			}
 
 			cmd := strings.Join(c.Args().Slice(), " ")
-			return index.Cmd(d, cmd, cwd)
+			return index.Cmd(d, cmd, cwd, source)
 		},
 	}
 }
@@ -275,7 +300,7 @@ func findCmd() *cli.Command {
 		Name:      "find",
 		Usage:     "Search history for matching commands",
 		ArgsUsage: "<keyword> [keyword...]",
-		Flags:     []cli.Flag{globalFlag},
+		Flags:     []cli.Flag{globalFlag, sourceFlag},
 		Action: func(c *cli.Context) error {
 			d := getDB(c)
 			cfg := getCfg(c)
@@ -286,7 +311,7 @@ func findCmd() *cli.Command {
 			}
 
 			cwdFilter := resolveCWDFilter(c, cfg)
-			res, err := find.Cmd(d, keywords, cfg.SearchLimit, cwdFilter)
+			res, err := find.Cmd(d, keywords, cfg.SearchLimit, cwdFilter, resolveSourceFilter(c))
 			if err != nil {
 				return err
 			}
@@ -312,12 +337,12 @@ func catCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "cat",
 		Usage: "Print all history entries ordered oldest-first",
-		Flags: []cli.Flag{globalFlag},
+		Flags: []cli.Flag{globalFlag, sourceFlag},
 		Action: func(c *cli.Context) error {
 			d := getDB(c)
 			cfg := getCfg(c)
 			cwdFilter := resolveCWDFilter(c, cfg)
-			hits, err := cat.Cmd(d, cwdFilter)
+			hits, err := cat.Cmd(d, cwdFilter, resolveSourceFilter(c))
 			if err != nil {
 				return err
 			}
@@ -335,7 +360,7 @@ func exploreCmd() *cli.Command {
 		Name:      "explore",
 		Usage:     "Interactively search and select a history entry",
 		ArgsUsage: "[tmpfile]",
-		Flags:     []cli.Flag{globalFlag},
+		Flags:     []cli.Flag{globalFlag, sourceFlag},
 		Action: func(c *cli.Context) error {
 			d := getDB(c)
 			cfg := getCfg(c)
@@ -345,7 +370,7 @@ func exploreCmd() *cli.Command {
 				tmpFile = c.Args().First()
 			}
 
-			return explore.Run(d, cfg, explore.ModeExplore, tmpFile, resolveCWDFilter(c, cfg))
+			return explore.Run(d, cfg, explore.ModeExplore, tmpFile, resolveCWDFilter(c, cfg), resolveSourceFilter(c))
 		},
 	}
 }
@@ -355,11 +380,11 @@ func pruneCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "prune",
 		Usage: "Interactively mark and delete history entries",
-		Flags: []cli.Flag{globalFlag},
+		Flags: []cli.Flag{globalFlag, sourceFlag},
 		Action: func(c *cli.Context) error {
 			d := getDB(c)
 			cfg := getCfg(c)
-			return explore.Run(d, cfg, explore.ModePrune, "", resolveCWDFilter(c, cfg))
+			return explore.Run(d, cfg, explore.ModePrune, "", resolveCWDFilter(c, cfg), resolveSourceFilter(c))
 		},
 	}
 }

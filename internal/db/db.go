@@ -11,7 +11,7 @@ import (
 	_ "modernc.org/sqlite" // register sqlite driver
 )
 
-const thisVersion = 1
+const thisVersion = 2
 
 const ddl = `
 CREATE TABLE IF NOT EXISTS cmdlut (
@@ -86,6 +86,36 @@ func migrate(db *sql.DB) error {
 		if err := migration1(db); err != nil {
 			return err
 		}
+	}
+	if v < 2 {
+		if err := migration2(db); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// migration2 adds the cmdmeta table for ghistx-specific key/value metadata
+// (e.g. source annotation). This table is unknown to C histx; it ignores it.
+func migration2(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS cmdmeta (
+			hash  TEXT,
+			key   TEXT,
+			value TEXT,
+			UNIQUE(hash, key)
+		);
+		CREATE INDEX IF NOT EXISTS idx_cmdmeta_hash ON cmdmeta(hash);
+	`)
+	if err != nil {
+		return fmt.Errorf("db: migration 2 create cmdmeta: %w", err)
+	}
+	_, err = db.Exec(
+		`INSERT OR IGNORE INTO histxversion(version, whence) VALUES(?, unixepoch())`,
+		2,
+	)
+	if err != nil {
+		return fmt.Errorf("db: mark migration 2: %w", err)
 	}
 	return nil
 }
