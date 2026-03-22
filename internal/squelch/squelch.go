@@ -130,6 +130,11 @@ func Filter(hits []find.Hit, patterns []Pattern) []find.Hit {
 	return out
 }
 
+// Matches reports whether cmd matches any of the compiled patterns.
+func Matches(cmd string, patterns []Pattern) bool {
+	return matchesAny(cmd, patterns)
+}
+
 func matchesAny(cmd string, patterns []Pattern) bool {
 	for _, p := range patterns {
 		if p.matches(cmd) {

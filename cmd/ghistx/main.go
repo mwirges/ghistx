@@ -11,6 +11,7 @@ import (
 
 	"github.com/urfave/cli/v2"
 
+	"github.com/mwirges/ghistx/internal/analyze"
 	"github.com/mwirges/ghistx/internal/cat"
 	"github.com/mwirges/ghistx/internal/config"
 	interndb "github.com/mwirges/ghistx/internal/db"
@@ -101,6 +102,7 @@ func main() {
 			exploreCmd(),
 			pruneCmd(),
 			claudeCmd(),
+			analyzeCmd(),
 		},
 	}
 
@@ -427,5 +429,32 @@ func pruneCmd() *cli.Command {
 // Used when the shell passes the entire query as one argument.
 func splitKeywords(s string) []string {
 	return strings.Fields(s)
+}
+
+// analyzeCmd opens the interactive stats TUI.
+func analyzeCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "analyze",
+		Usage: "Analyze command history statistics with an interactive TUI",
+		Flags: []cli.Flag{
+			globalFlag,
+			sourceFlag,
+			withSquelchFlag,
+			&cli.BoolFlag{
+				Name:  "by-program",
+				Usage: "group Commands tab by program name instead of full command",
+			},
+		},
+		Action: func(c *cli.Context) error {
+			d := getDB(c)
+			cfg := getCfg(c)
+			cwdFilter := resolveCWDFilter(c, cfg)
+			stats, err := analyze.Compute(d, cwdFilter, resolveSourceFilter(c), resolveSquelchPatterns(c))
+			if err != nil {
+				return err
+			}
+			return analyze.Run(stats, c.Bool("by-program"))
+		},
+	}
 }
 

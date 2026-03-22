@@ -26,6 +26,7 @@ ghistx find <keyword...>  # search history
 ghistx cat                # dump all history oldest-first
 ghistx explore [tmpfile]  # interactive fuzzy-search TUI
 ghistx prune              # interactive TUI to mark and delete entries
+ghistx analyze            # interactive stats TUI (frequency, categories, heatmap)
 ghistx claude             # browse Claude Code command history (global, source=claude)
 ghistx claude install     # install the Claude Code hook automatically
 ```
@@ -271,6 +272,27 @@ squelch = glob:git diff *
 ```
 
 > **Note on glob and `/`**: `filepath.Match` treats `/` as a path separator, so `*` does not match it. `glob:ls *` matches `ls -la` but not `ls /tmp`. Use `regex:` if you need to match across slashes.
+
+## Analyze
+
+`ghistx analyze` opens an interactive 5-tab stats TUI:
+
+| Tab | Contents |
+|-----|----------|
+| **Overview** | Total/unique counts, date range, avg/day, hourly sparkline |
+| **Commands** | Top 15 commands by frequency (bar chart) |
+| **Categories** | Command breakdown by type (vcs, containers, build, cloud, …) |
+| **Directories** | Top working directories by activity |
+| **Activity** | GitHub-style contribution heatmap (last 52 weeks) |
+
+Navigation: `1`–`5` or `tab`/`shift+tab` to switch tabs, `j`/`k` to scroll lists, `g` to jump to top, `q` to quit.
+
+```sh
+ghistx analyze              # current directory only (respects local-only config)
+ghistx analyze --global     # all directories
+ghistx analyze --by-program # Commands tab groups by program name instead of full command
+ghistx analyze --source all # include Claude-indexed commands too
+```
 
 ## Claude Code Integration
 

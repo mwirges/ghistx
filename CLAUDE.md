@@ -7,7 +7,7 @@
 ## Package Map
 
 ```
-cmd/ghistx/main.go          CLI wiring (urfave/cli v2); subcommands: index, find, cat, explore, prune
+cmd/ghistx/main.go          CLI wiring (urfave/cli v2); subcommands: index, find, cat, explore, prune, analyze
 internal/config/config.go   ~/.histx key=value parser; Config struct with defaults
 internal/db/db.go           Open(), schema creation, migrations (pure-Go SQLite via modernc.org/sqlite)
 internal/ngram/ngram.go     3-char byte-level n-gram generation — Gen(s) []uint32
@@ -20,6 +20,8 @@ internal/explore/model.go   Bubbletea TUI model (explore + prune modes); cwdFilt
 internal/explore/styles.go  Lipgloss style definitions
 internal/explore/tiocsti_unix.go   TIOCSTI injection (//go:build unix)
 internal/explore/tiocsti_other.go  No-op stub for non-unix builds
+internal/analyze/analyze.go        Stats computation: Compute(), Category(), Freq/Stats types
+internal/analyze/view.go           Bubbletea TUI: 5-tab display with GitHub-style heatmap + bar charts
 ```
 
 ---
