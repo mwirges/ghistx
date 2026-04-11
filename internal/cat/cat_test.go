@@ -25,7 +25,7 @@ func TestCatOldestFirst(t *testing.T) {
 		time.Sleep(5 * time.Millisecond) // ensure ts ordering
 	}
 
-	hits, err := Cmd(d, "", "user")
+	hits, err := Cmd(d, "", "user", 0)
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestCatEmpty(t *testing.T) {
 	}
 	defer d.Close()
 
-	hits, err := Cmd(d, "", "user")
+	hits, err := Cmd(d, "", "user", 0)
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestCatCWDPreserved(t *testing.T) {
 		t.Fatalf("index.Cmd: %v", err)
 	}
 
-	hits, err := Cmd(d, "", "user")
+	hits, err := Cmd(d, "", "user", 0)
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestCatCWDFilter(t *testing.T) {
 	}
 
 	// Filter to /home/user/project — only one result.
-	hits, err := Cmd(d, "/home/user/project", "user")
+	hits, err := Cmd(d, "/home/user/project", "user", 0)
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestCatCWDFilter(t *testing.T) {
 	}
 
 	// Empty filter returns all.
-	hits, err = Cmd(d, "", "user")
+	hits, err = Cmd(d, "", "user", 0)
 	if err != nil {
 		t.Fatalf("Cmd (global): %v", err)
 	}
@@ -140,7 +140,7 @@ func TestCatSourceFilterUser(t *testing.T) {
 	}
 
 	// Default "user" filter: only shell-indexed command.
-	hits, err := Cmd(d, "", "user")
+	hits, err := Cmd(d, "", "user", 0)
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestCatSourceFilterClaude(t *testing.T) {
 		t.Fatalf("index claude: %v", err)
 	}
 
-	hits, err := Cmd(d, "", "claude")
+	hits, err := Cmd(d, "", "claude", 0)
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestCatSourceFilterAll(t *testing.T) {
 		t.Fatalf("index claude: %v", err)
 	}
 
-	hits, err := Cmd(d, "", "all")
+	hits, err := Cmd(d, "", "all", 0)
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}

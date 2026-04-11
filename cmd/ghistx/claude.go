@@ -39,7 +39,7 @@ func claudeCmd() *cli.Command {
 func runClaudeHistory(c *cli.Context) error {
 	d := getDB(c)
 	// Always global, always claude source — that's the point of this command.
-	hits, err := cat.Cmd(d, "", "claude")
+	hits, err := cat.Cmd(d, "", "claude", 0)
 	if err != nil {
 		return err
 	}

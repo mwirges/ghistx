@@ -18,10 +18,10 @@ import (
 	"github.com/mwirges/ghistx/internal/display"
 	"github.com/mwirges/ghistx/internal/explore"
 	"github.com/mwirges/ghistx/internal/find"
+	"github.com/mwirges/ghistx/internal/fuzzy"
 	"github.com/mwirges/ghistx/internal/hashlet"
 	"github.com/mwirges/ghistx/internal/index"
 	"github.com/mwirges/ghistx/internal/squelch"
-	"github.com/mwirges/ghistx/internal/util"
 )
 
 type contextKey string
@@ -47,6 +47,7 @@ func main() {
 			globalFlag,      // app-level --global for default action
 			sourceFlag,      // app-level --source for default action
 			withSquelchFlag, // app-level --with-squelch for default action
+			reverseFlag,     // app-level --reverse for default action
 			&cli.StringFlag{
 				Name:   "tmpfile",
 				Usage:  "write resolved command to this file (used by shell integration)",
@@ -83,6 +84,7 @@ func main() {
 		},
 		// Default action: no subcommand supplied.
 		// A single hex argument >= 4 chars is treated as a hashlet re-execution.
+		// Any other positional arguments are treated as a phrase filter on history.
 		Action: func(c *cli.Context) error {
 			if c.NArg() == 1 {
 				arg := c.Args().First()
@@ -91,7 +93,8 @@ func main() {
 				}
 			}
 			if c.NArg() > 0 {
-				return fmt.Errorf("unknown command %q; see --help", c.Args().First())
+				phrase := strings.Join(c.Args().Slice(), " ")
+				return runFilteredHistory(c, phrase)
 			}
 			return runHistory(c)
 		},
@@ -159,6 +162,13 @@ var withSquelchFlag = &cli.BoolFlag{
 	Usage:   "include mundane commands that are normally hidden",
 }
 
+// reverseFlag is the shared --reverse/-r flag for listing subcommands.
+var reverseFlag = &cli.BoolFlag{
+	Name:    "reverse",
+	Aliases: []string{"r"},
+	Usage:   "reverse the output order",
+}
+
 // resolveSquelchPatterns returns the compiled squelch patterns from app metadata.
 // Returns nil (no filtering) when --with-squelch is set.
 func resolveSquelchPatterns(c *cli.Context) []squelch.Pattern {
@@ -198,20 +208,22 @@ func isatty(f *os.File) bool {
 	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
-// runHistory shows history newest-to-oldest, piped through $PAGER when set and
-// stdout is a terminal.
+// runHistory shows history, piped through $PAGER when set and stdout is a terminal.
+// Default order is newest-first; --reverse gives oldest-first.
 func runHistory(c *cli.Context) error {
 	d := getDB(c)
 	cfg := getCfg(c)
 	cwdFilter := resolveCWDFilter(c, cfg)
-	hits, err := cat.Cmd(d, cwdFilter, resolveSourceFilter(c))
+	hits, err := cat.Cmd(d, cwdFilter, resolveSourceFilter(c), 0)
 	if err != nil {
 		return err
 	}
 	hits = squelch.Filter(hits, resolveSquelchPatterns(c))
-	// Reverse to newest-first.
-	for i, j := 0, len(hits)-1; i < j; i, j = i+1, j-1 {
-		hits[i], hits[j] = hits[j], hits[i]
+	if !c.Bool("reverse") {
+		// Default: newest-first.
+		for i, j := 0, len(hits)-1; i < j; i, j = i+1, j-1 {
+			hits[i], hits[j] = hits[j], hits[i]
+		}
 	}
 	if cwdFilter != "" {
 		clearCWD(hits)
@@ -219,6 +231,36 @@ func runHistory(c *cli.Context) error {
 	// Render with color keyed off the real stdout (not the pipe we may write to).
 	content := display.Render(hits, os.Stdout)
 	return runWithPager(content)
+}
+
+// runFilteredHistory filters history by phrase and prints directly (no pager).
+// Default order is newest-first (exact matches first, then fuzzy); --reverse flips it.
+func runFilteredHistory(c *cli.Context, phrase string) error {
+	d := getDB(c)
+	cfg := getCfg(c)
+	cwdFilter := resolveCWDFilter(c, cfg)
+	hits, err := cat.Cmd(d, cwdFilter, resolveSourceFilter(c), 0)
+	if err != nil {
+		return err
+	}
+	hits = squelch.Filter(hits, resolveSquelchPatterns(c))
+	// Reverse to newest-first before filtering so exact results preserve that order.
+	for i, j := 0, len(hits)-1; i < j; i, j = i+1, j-1 {
+		hits[i], hits[j] = hits[j], hits[i]
+	}
+	hits = fuzzy.FilterPhrase(hits, phrase)
+	if len(hits) == 0 {
+		return nil
+	}
+	if c.Bool("reverse") {
+		for i, j := 0, len(hits)-1; i < j; i, j = i+1, j-1 {
+			hits[i], hits[j] = hits[j], hits[i]
+		}
+	}
+	if cwdFilter != "" {
+		clearCWD(hits)
+	}
+	return display.PrintHits(os.Stdout, hits)
 }
 
 // runWithPager pipes content through $PAGER when set and stdout is a terminal.
@@ -334,7 +376,7 @@ func findCmd() *cli.Command {
 		Name:      "find",
 		Usage:     "Search history for matching commands",
 		ArgsUsage: "<keyword> [keyword...]",
-		Flags:     []cli.Flag{globalFlag, sourceFlag, withSquelchFlag},
+		Flags:     []cli.Flag{globalFlag, sourceFlag, withSquelchFlag, reverseFlag},
 		Action: func(c *cli.Context) error {
 			d := getDB(c)
 			cfg := getCfg(c)
@@ -350,38 +392,54 @@ func findCmd() *cli.Command {
 				return err
 			}
 			res.Hits = squelch.Filter(res.Hits, resolveSquelchPatterns(c))
+			if c.Bool("reverse") {
+				for i, j := 0, len(res.Hits)-1; i < j; i, j = i+1, j-1 {
+					res.Hits[i], res.Hits[j] = res.Hits[j], res.Hits[i]
+				}
+			}
 			if res.IsGlobal && len(res.Hits) > 0 {
 				fmt.Println("── no local results, showing global ──")
 			}
-			showCWD := cwdFilter == "" || res.IsGlobal
-			for _, h := range res.Hits {
-				when := util.FormatRelative(h.TS)
-				if h.CWD != "" && showCWD {
-					fmt.Printf("[%s] %s (%s)\n", when, h.Cmd, h.CWD)
-				} else {
-					fmt.Printf("[%s] %s\n", when, h.Cmd)
-				}
+			if !res.IsGlobal && cwdFilter != "" {
+				clearCWD(res.Hits)
 			}
-			return nil
+			return display.PrintHits(os.Stdout, res.Hits)
 		},
 	}
 }
 
-// catCmd dumps all history oldest-first.
+// catCmd dumps history oldest-first.
 func catCmd() *cli.Command {
 	return &cli.Command{
-		Name:  "cat",
-		Usage: "Print all history entries ordered oldest-first",
-		Flags: []cli.Flag{globalFlag, sourceFlag, withSquelchFlag},
+		Name:      "cat",
+		Usage:     "Print history entries ordered oldest-first",
+		ArgsUsage: "[phrase...]",
+		Flags: []cli.Flag{
+			globalFlag, sourceFlag, withSquelchFlag, reverseFlag,
+			&cli.IntFlag{
+				Name:    "limit",
+				Aliases: []string{"n"},
+				Usage:   "show only the N most recent entries",
+			},
+		},
 		Action: func(c *cli.Context) error {
 			d := getDB(c)
 			cfg := getCfg(c)
 			cwdFilter := resolveCWDFilter(c, cfg)
-			hits, err := cat.Cmd(d, cwdFilter, resolveSourceFilter(c))
+			hits, err := cat.Cmd(d, cwdFilter, resolveSourceFilter(c), c.Int("limit"))
 			if err != nil {
 				return err
 			}
 			hits = squelch.Filter(hits, resolveSquelchPatterns(c))
+			if c.NArg() > 0 {
+				phrase := strings.Join(c.Args().Slice(), " ")
+				hits = fuzzy.FilterPhrase(hits, phrase)
+			}
+			if c.Bool("reverse") {
+				for i, j := 0, len(hits)-1; i < j; i, j = i+1, j-1 {
+					hits[i], hits[j] = hits[j], hits[i]
+				}
+			}
 			if cwdFilter != "" {
 				clearCWD(hits)
 			}

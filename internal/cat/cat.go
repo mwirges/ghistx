@@ -15,7 +15,8 @@ import (
 // Cmd returns commands from the database, ordered oldest-first.
 // cwdFilter restricts to a specific directory (raw path); empty = all directories.
 // sourceFilter controls which commands are shown: "user" (default), "claude", or "all".
-func Cmd(db *sql.DB, cwdFilter, sourceFilter string) ([]find.Hit, error) {
+// limit, when > 0, returns only the limit most-recent commands (still oldest-first).
+func Cmd(db *sql.DB, cwdFilter, sourceFilter string, limit int) ([]find.Hit, error) {
 	query := `
 		SELECT r.hash, r.ts, r.cmd, r.cwd, COALESCE(m.value, '') AS source
 		FROM cmdraw r
@@ -38,7 +39,13 @@ func Cmd(db *sql.DB, cwdFilter, sourceFilter string) ([]find.Hit, error) {
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	query += ` ORDER BY r.ts ASC`
+	if limit > 0 {
+		// Fetch the N most recent, then reverse below for oldest-first display.
+		query += ` ORDER BY r.ts DESC LIMIT ?`
+		args = append(args, limit)
+	} else {
+		query += ` ORDER BY r.ts ASC`
+	}
 
 	rows, err := db.Query(query, args...)
 	if err != nil {
@@ -74,5 +81,14 @@ func Cmd(db *sql.DB, cwdFilter, sourceFilter string) ([]find.Hit, error) {
 			Source: source,
 		})
 	}
-	return hits, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if limit > 0 {
+		// Results arrived newest-first; reverse to oldest-first for display.
+		for i, j := 0, len(hits)-1; i < j; i, j = i+1, j-1 {
+			hits[i], hits[j] = hits[j], hits[i]
+		}
+	}
+	return hits, nil
 }

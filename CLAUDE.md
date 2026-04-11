@@ -22,6 +22,7 @@ internal/explore/tiocsti_unix.go   TIOCSTI injection (//go:build unix)
 internal/explore/tiocsti_other.go  No-op stub for non-unix builds
 internal/analyze/analyze.go        Stats computation: Compute(), Category(), Freq/Stats types
 internal/analyze/view.go           Bubbletea TUI: 5-tab display with GitHub-style heatmap + bar charts
+internal/fuzzy/fuzzy.go            Levenshtein distance + phrase matching: Distance(), MatchPhrase(), FilterPhrase()
 ```
 
 ---
@@ -74,6 +75,8 @@ CLI flags (not stored in config file):
 | `--source` | `user`, `claude`, `all` | `user` | Filter results by command source |
 | `--global` / `-g` | — | — | Bypass CWD filtering for this invocation |
 | `--with-squelch` / `-s` | — | — | Include squelched commands in results |
+| `--reverse` / `-r` | — | — | Reverse output order (`find`, `cat`, default action) |
+| `-n` / `--limit` | int | 0 (all) | `cat` only: show N most recent entries (oldest-first) |
 
 Example:
 ```
