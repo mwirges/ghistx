@@ -16,11 +16,18 @@ import (
 // cwdFilter restricts to a specific directory (raw path); empty = all directories.
 // sourceFilter controls which commands are shown: "user" (default), "claude", or "all".
 // limit, when > 0, returns only the limit most-recent commands (still oldest-first).
-func Cmd(db *sql.DB, cwdFilter, sourceFilter string, limit int) ([]find.Hit, error) {
+// toolFilter and categoryFilter, when non-empty, restrict results by cmdmeta values.
+func Cmd(db *sql.DB, cwdFilter, sourceFilter string, limit int, toolFilter, categoryFilter string) ([]find.Hit, error) {
 	query := `
 		SELECT r.hash, r.ts, r.cmd, r.cwd, COALESCE(m.value, '') AS source
 		FROM cmdraw r
 		LEFT OUTER JOIN cmdmeta m ON r.hash = m.hash AND m.key = 'source'`
+	if toolFilter != "" {
+		query += ` LEFT OUTER JOIN cmdmeta mt ON r.hash = mt.hash AND mt.key = 'tool'`
+	}
+	if categoryFilter != "" {
+		query += ` LEFT OUTER JOIN cmdmeta mc ON r.hash = mc.hash AND mc.key = 'category'`
+	}
 	var args []any
 	var conditions []string
 	if cwdFilter != "" {
@@ -35,6 +42,14 @@ func Cmd(db *sql.DB, cwdFilter, sourceFilter string, limit int) ([]find.Hit, err
 		conditions = append(conditions, "COALESCE(m.value, '') = 'claude'")
 	default: // "user" or ""
 		conditions = append(conditions, "COALESCE(m.value, '') = ''")
+	}
+	if toolFilter != "" {
+		conditions = append(conditions, "mt.value = ?")
+		args = append(args, toolFilter)
+	}
+	if categoryFilter != "" {
+		conditions = append(conditions, "mc.value = ?")
+		args = append(args, categoryFilter)
 	}
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")

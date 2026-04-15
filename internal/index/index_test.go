@@ -27,7 +27,7 @@ func TestIndexAndVerify(t *testing.T) {
 	cmd := "git status"
 	cwd := "/home/user"
 
-	if err := Cmd(d, cmd, cwd); err != nil {
+	if err := Cmd(d, cmd, cwd, nil); err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
 
@@ -70,10 +70,10 @@ func TestIndexDuplicateIdempotent(t *testing.T) {
 	defer d.Close()
 
 	cmd := "ls -la"
-	if err := Cmd(d, cmd, "/"); err != nil {
+	if err := Cmd(d, cmd, "/", nil); err != nil {
 		t.Fatalf("first Cmd: %v", err)
 	}
-	if err := Cmd(d, cmd, "/"); err != nil {
+	if err := Cmd(d, cmd, "/", nil); err != nil {
 		t.Fatalf("second Cmd: %v", err)
 	}
 
@@ -93,7 +93,7 @@ func TestIndexManyCommands(t *testing.T) {
 
 	for i := 0; i < 10; i++ {
 		cmd := fmt.Sprintf("echo command %d", i)
-		if err := Cmd(d, cmd, "/tmp"); err != nil {
+		if err := Cmd(d, cmd, "/tmp", nil); err != nil {
 			t.Fatalf("Cmd(%q): %v", cmd, err)
 		}
 	}

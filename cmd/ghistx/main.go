@@ -214,7 +214,7 @@ func runHistory(c *cli.Context) error {
 	d := getDB(c)
 	cfg := getCfg(c)
 	cwdFilter := resolveCWDFilter(c, cfg)
-	hits, err := cat.Cmd(d, cwdFilter, resolveSourceFilter(c), 0)
+	hits, err := cat.Cmd(d, cwdFilter, resolveSourceFilter(c), 0, "", "")
 	if err != nil {
 		return err
 	}
@@ -239,7 +239,7 @@ func runFilteredHistory(c *cli.Context, phrase string) error {
 	d := getDB(c)
 	cfg := getCfg(c)
 	cwdFilter := resolveCWDFilter(c, cfg)
-	hits, err := cat.Cmd(d, cwdFilter, resolveSourceFilter(c), 0)
+	hits, err := cat.Cmd(d, cwdFilter, resolveSourceFilter(c), 0, "", "")
 	if err != nil {
 		return err
 	}
@@ -334,6 +334,14 @@ func indexCmd() *cli.Command {
 				Usage: "tag the command with a source label (e.g. 'claude')",
 			},
 			&cli.StringFlag{
+				Name:  "tool",
+				Usage: "tag the command with the tool name (e.g. 'Read')",
+			},
+			&cli.StringFlag{
+				Name:  "category",
+				Usage: "tag the command with a tool category (e.g. 'file')",
+			},
+			&cli.StringFlag{
 				Name:  "cwd",
 				Usage: "override the working directory recorded with the command",
 			},
@@ -344,7 +352,7 @@ func indexCmd() *cli.Command {
 			if cwd == "" {
 				cwd, _ = os.Getwd()
 			}
-			source := c.String("source")
+			meta := buildMeta(c.String("source"), c.String("tool"), c.String("category"))
 
 			if c.Bool("stdin") || (c.NArg() == 1 && c.Args().First() == "-") {
 				scanner := bufio.NewScanner(os.Stdin)
@@ -353,7 +361,7 @@ func indexCmd() *cli.Command {
 					if line == "" {
 						continue
 					}
-					if err := index.Cmd(d, line, cwd, source); err != nil {
+					if err := index.Cmd(d, line, cwd, meta); err != nil {
 						return err
 					}
 				}
@@ -365,9 +373,28 @@ func indexCmd() *cli.Command {
 			}
 
 			cmd := strings.Join(c.Args().Slice(), " ")
-			return index.Cmd(d, cmd, cwd, source)
+			return index.Cmd(d, cmd, cwd, meta)
 		},
 	}
+}
+
+// buildMeta constructs a metadata map for index.Cmd from individual fields.
+// Empty strings are omitted.
+func buildMeta(source, tool, category string) map[string]string {
+	m := make(map[string]string)
+	if source != "" {
+		m["source"] = source
+	}
+	if tool != "" {
+		m["tool"] = tool
+	}
+	if category != "" {
+		m["category"] = category
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	return m
 }
 
 // findCmd searches the history database.
@@ -426,7 +453,7 @@ func catCmd() *cli.Command {
 			d := getDB(c)
 			cfg := getCfg(c)
 			cwdFilter := resolveCWDFilter(c, cfg)
-			hits, err := cat.Cmd(d, cwdFilter, resolveSourceFilter(c), c.Int("limit"))
+			hits, err := cat.Cmd(d, cwdFilter, resolveSourceFilter(c), c.Int("limit"), "", "")
 			if err != nil {
 				return err
 			}

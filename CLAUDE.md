@@ -75,8 +75,10 @@ CLI flags (not stored in config file):
 | `--source` | `user`, `claude`, `all` | `user` | Filter results by command source |
 | `--global` / `-g` | — | — | Bypass CWD filtering for this invocation |
 | `--with-squelch` / `-s` | — | — | Include squelched commands in results |
-| `--reverse` / `-r` | — | — | Reverse output order (`find`, `cat`, default action) |
+| `--reverse` / `-r` | — | — | Reverse output order (`find`, `cat`, `claude`, default action) |
 | `-n` / `--limit` | int | 0 (all) | `cat` only: show N most recent entries (oldest-first) |
+| `--tool` / `-t` | string | — | `claude` only: filter by tool name (e.g. `Bash`, `Read`) |
+| `--category` / `-c` | string | — | `claude` only: filter by tool category (`shell`, `file`, `search`, `web`, `agent`, `cron`) |
 
 Example:
 ```

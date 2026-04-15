@@ -93,7 +93,7 @@ func TestPatchSettingsJSONIdempotent(t *testing.T) {
 		t.Fatalf("first install: added=%v err=%v", added, err)
 	}
 
-	// Second install — should report not added.
+	// Second install — should report not added (already present).
 	added, err = patchSettingsJSON(settingsPath, scriptPath)
 	if err != nil {
 		t.Fatalf("second install error: %v", err)
@@ -102,7 +102,7 @@ func TestPatchSettingsJSONIdempotent(t *testing.T) {
 		t.Error("second install should return added=false (already present)")
 	}
 
-	// Verify there's still exactly one Bash matcher entry.
+	// Verify there is exactly one PostToolUse entry with our script.
 	data, _ := os.ReadFile(settingsPath)
 	var root map[string]interface{}
 	json.Unmarshal(data, &root)
@@ -111,13 +111,67 @@ func TestPatchSettingsJSONIdempotent(t *testing.T) {
 	count := 0
 	for _, item := range postToolUse {
 		m, _ := item.(map[string]interface{})
-		if m["matcher"] == "Bash" {
-			count++
+		if m == nil {
+			continue
+		}
+		innerHooks, _ := m["hooks"].([]interface{})
+		for _, h := range innerHooks {
+			hm, _ := h.(map[string]interface{})
+			if hm != nil && hm["command"] == scriptPath {
+				count++
+			}
 		}
 	}
 	if count != 1 {
-		t.Errorf("expected 1 Bash matcher, got %d", count)
+		t.Errorf("expected 1 entry for our script, got %d", count)
 	}
+}
+
+// TestPatchSettingsJSONUpgradesOldBashMatcher verifies that an old Bash-matcher
+// hook entry is replaced by a no-matcher (all-tools) entry on re-install.
+func TestPatchSettingsJSONUpgradesOldBashMatcher(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+	scriptPath := "/usr/local/bin/ghistx-index.sh"
+
+	// Simulate old-style install with Bash matcher.
+	old := map[string]interface{}{
+		"hooks": map[string]interface{}{
+			"PostToolUse": []interface{}{
+				map[string]interface{}{
+					"matcher": "Bash",
+					"hooks": []interface{}{
+						map[string]interface{}{"type": "command", "command": scriptPath},
+					},
+				},
+			},
+		},
+	}
+	oldData, _ := json.MarshalIndent(old, "", "  ")
+	os.WriteFile(settingsPath, append(oldData, '\n'), 0644)
+
+	added, err := patchSettingsJSON(settingsPath, scriptPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !added {
+		t.Error("expected added=true (upgrade from old Bash matcher)")
+	}
+
+	data, _ := os.ReadFile(settingsPath)
+	var root map[string]interface{}
+	json.Unmarshal(data, &root)
+
+	// Old Bash matcher entry should be gone; new no-matcher entry should exist.
+	hooks := root["hooks"].(map[string]interface{})
+	postToolUse := hooks["PostToolUse"].([]interface{})
+	for _, item := range postToolUse {
+		m, _ := item.(map[string]interface{})
+		if m != nil && m["matcher"] == "Bash" {
+			t.Error("old Bash matcher entry should have been removed")
+		}
+	}
+	assertHookPresent(t, root, scriptPath)
 }
 
 func TestPatchSettingsJSONPreservesExistingHooks(t *testing.T) {
@@ -150,11 +204,11 @@ func TestPatchSettingsJSONPreservesExistingHooks(t *testing.T) {
 	var root map[string]interface{}
 	json.Unmarshal(data, &root)
 
-	// Both the original Write matcher and the new Bash matcher should be present.
+	// Both the original Write matcher and the new no-matcher entry should be present.
 	hooks := root["hooks"].(map[string]interface{})
 	postToolUse := hooks["PostToolUse"].([]interface{})
 	if len(postToolUse) != 2 {
-		t.Errorf("expected 2 matchers, got %d", len(postToolUse))
+		t.Errorf("expected 2 entries, got %d", len(postToolUse))
 	}
 	assertHookPresent(t, root, scriptPath)
 }
@@ -182,7 +236,7 @@ func TestPatchSettingsJSONWritesTrailingNewline(t *testing.T) {
 	}
 }
 
-// assertHookPresent verifies that scriptPath appears in hooks.PostToolUse[].hooks[].command.
+// assertHookPresent verifies scriptPath appears in any PostToolUse entry.
 func assertHookPresent(t *testing.T, root map[string]interface{}, scriptPath string) {
 	t.Helper()
 	hooks, _ := root["hooks"].(map[string]interface{})
@@ -195,7 +249,7 @@ func assertHookPresent(t *testing.T, root map[string]interface{}, scriptPath str
 	}
 	for _, item := range postToolUse {
 		m, _ := item.(map[string]interface{})
-		if m == nil || m["matcher"] != "Bash" {
+		if m == nil {
 			continue
 		}
 		innerHooks, _ := m["hooks"].([]interface{})

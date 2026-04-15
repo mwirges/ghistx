@@ -39,7 +39,7 @@ func TestFindExactMatch(t *testing.T) {
 		"docker ps",
 	}
 	for _, c := range cmds {
-		if err := index.Cmd(d, c, "/"); err != nil {
+		if err := index.Cmd(d, c, "/", nil); err != nil {
 			t.Fatalf("index.Cmd(%q): %v", c, err)
 		}
 		time.Sleep(2 * time.Millisecond) // ensure distinct timestamps
@@ -69,7 +69,7 @@ func TestFindShortKeywordACS(t *testing.T) {
 
 	cmds := []string{"ls", "ls -la", "cat foo.txt", "go build ./..."}
 	for _, c := range cmds {
-		if err := index.Cmd(d, c, "/"); err != nil {
+		if err := index.Cmd(d, c, "/", nil); err != nil {
 			t.Fatalf("index.Cmd(%q): %v", c, err)
 		}
 		time.Sleep(2 * time.Millisecond)
@@ -104,7 +104,7 @@ func TestFindNoResults(t *testing.T) {
 	}
 	defer d.Close()
 
-	if err := index.Cmd(d, "git status", "/"); err != nil {
+	if err := index.Cmd(d, "git status", "/", nil); err != nil {
 		t.Fatalf("index.Cmd: %v", err)
 	}
 
@@ -124,7 +124,7 @@ func TestFindEmptyKeywords(t *testing.T) {
 	}
 	defer d.Close()
 
-	if err := index.Cmd(d, "git status", "/"); err != nil {
+	if err := index.Cmd(d, "git status", "/", nil); err != nil {
 		t.Fatalf("index.Cmd: %v", err)
 	}
 
@@ -148,7 +148,7 @@ func TestFindLimit(t *testing.T) {
 		cmd := "echo testing command"
 		// Make unique by appending index
 		cmd = cmd + " " + string(rune('0'+i))
-		if err := index.Cmd(d, cmd, "/"); err != nil {
+		if err := index.Cmd(d, cmd, "/", nil); err != nil {
 			t.Fatalf("index.Cmd: %v", err)
 		}
 		time.Sleep(1 * time.Millisecond)
@@ -170,7 +170,7 @@ func TestFindCWDDecoded(t *testing.T) {
 	}
 	defer d.Close()
 
-	if err := index.Cmd(d, "make build", "/home/user/project"); err != nil {
+	if err := index.Cmd(d, "make build", "/home/user/project", nil); err != nil {
 		t.Fatalf("index.Cmd: %v", err)
 	}
 
@@ -193,10 +193,10 @@ func TestFindCWDFilterLocalMatch(t *testing.T) {
 	}
 	defer d.Close()
 
-	if err := index.Cmd(d, "make test", "/home/user/project"); err != nil {
+	if err := index.Cmd(d, "make test", "/home/user/project", nil); err != nil {
 		t.Fatalf("index.Cmd: %v", err)
 	}
-	if err := index.Cmd(d, "make build", "/other/project"); err != nil {
+	if err := index.Cmd(d, "make build", "/other/project", nil); err != nil {
 		t.Fatalf("index.Cmd: %v", err)
 	}
 
@@ -222,7 +222,7 @@ func TestFindCWDFilterNoLocalFallsBack(t *testing.T) {
 	}
 	defer d.Close()
 
-	if err := index.Cmd(d, "make test", "/home/user/project"); err != nil {
+	if err := index.Cmd(d, "make test", "/home/user/project", nil); err != nil {
 		t.Fatalf("index.Cmd: %v", err)
 	}
 
@@ -246,7 +246,7 @@ func TestFindCWDFilterGlobalOverride(t *testing.T) {
 	}
 	defer d.Close()
 
-	if err := index.Cmd(d, "make test", "/home/user/project"); err != nil {
+	if err := index.Cmd(d, "make test", "/home/user/project", nil); err != nil {
 		t.Fatalf("index.Cmd: %v", err)
 	}
 
@@ -269,11 +269,11 @@ func TestFindSourceFilterUser(t *testing.T) {
 		t.Fatalf("db.Open: %v", err)
 	}
 	defer d.Close()
-	if err := index.Cmd(d, "git status", "/"); err != nil {
+	if err := index.Cmd(d, "git status", "/", nil); err != nil {
 		t.Fatalf("index user: %v", err)
 	}
 	time.Sleep(2 * time.Millisecond)
-	if err := index.Cmd(d, "kubectl apply", "/", "claude"); err != nil {
+	if err := index.Cmd(d, "kubectl apply", "/", map[string]string{"source": "claude"}); err != nil {
 		t.Fatalf("index claude: %v", err)
 	}
 
@@ -298,11 +298,11 @@ func TestFindSourceFilterClaude(t *testing.T) {
 		t.Fatalf("db.Open: %v", err)
 	}
 	defer d.Close()
-	if err := index.Cmd(d, "git status", "/"); err != nil {
+	if err := index.Cmd(d, "git status", "/", nil); err != nil {
 		t.Fatalf("index user: %v", err)
 	}
 	time.Sleep(2 * time.Millisecond)
-	if err := index.Cmd(d, "kubectl apply", "/", "claude"); err != nil {
+	if err := index.Cmd(d, "kubectl apply", "/", map[string]string{"source": "claude"}); err != nil {
 		t.Fatalf("index claude: %v", err)
 	}
 
@@ -324,11 +324,11 @@ func TestFindSourceFilterAll(t *testing.T) {
 		t.Fatalf("db.Open: %v", err)
 	}
 	defer d.Close()
-	if err := index.Cmd(d, "make test", "/"); err != nil {
+	if err := index.Cmd(d, "make test", "/", nil); err != nil {
 		t.Fatalf("index user: %v", err)
 	}
 	time.Sleep(2 * time.Millisecond)
-	if err := index.Cmd(d, "make build", "/", "claude"); err != nil {
+	if err := index.Cmd(d, "make build", "/", map[string]string{"source": "claude"}); err != nil {
 		t.Fatalf("index claude: %v", err)
 	}
 
@@ -347,7 +347,7 @@ func TestFindSourceFilterUserExcludesClaude(t *testing.T) {
 		t.Fatalf("db.Open: %v", err)
 	}
 	defer d.Close()
-	if err := index.Cmd(d, "make build", "/", "claude"); err != nil {
+	if err := index.Cmd(d, "make build", "/", map[string]string{"source": "claude"}); err != nil {
 		t.Fatalf("index claude: %v", err)
 	}
 
@@ -367,7 +367,7 @@ func TestFindSourceFilterClaudeExcludesUser(t *testing.T) {
 		t.Fatalf("db.Open: %v", err)
 	}
 	defer d.Close()
-	if err := index.Cmd(d, "make build", "/"); err != nil {
+	if err := index.Cmd(d, "make build", "/", nil); err != nil {
 		t.Fatalf("index user: %v", err)
 	}
 

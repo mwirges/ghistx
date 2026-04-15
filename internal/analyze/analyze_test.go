@@ -134,7 +134,11 @@ func openDB(t *testing.T) *sql.DB {
 
 func indexCmd(t *testing.T, d *sql.DB, cmd, cwd string, source ...string) {
 	t.Helper()
-	if err := index.Cmd(d, cmd, cwd, source...); err != nil {
+	var meta map[string]string
+	if len(source) > 0 && source[0] != "" {
+		meta = map[string]string{"source": source[0]}
+	}
+	if err := index.Cmd(d, cmd, cwd, meta); err != nil {
 		t.Fatalf("index.Cmd(%q): %v", cmd, err)
 	}
 }

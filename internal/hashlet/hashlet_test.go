@@ -71,7 +71,7 @@ func TestFindByPrefixFound(t *testing.T) {
 	}
 	defer d.Close()
 
-	if err := index.Cmd(d, "git status", "/"); err != nil {
+	if err := index.Cmd(d, "git status", "/", nil); err != nil {
 		t.Fatalf("index.Cmd: %v", err)
 	}
 
@@ -162,7 +162,7 @@ func TestFindByPrefixUppercase(t *testing.T) {
 	}
 	defer d.Close()
 
-	if err := index.Cmd(d, "make build", "/"); err != nil {
+	if err := index.Cmd(d, "make build", "/", nil); err != nil {
 		t.Fatalf("index.Cmd: %v", err)
 	}
 

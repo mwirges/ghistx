@@ -19,13 +19,13 @@ func TestCatOldestFirst(t *testing.T) {
 	// Index three commands with distinct timestamps.
 	cmds := []string{"first command", "second command", "third command"}
 	for _, c := range cmds {
-		if err := index.Cmd(d, c, "/"); err != nil {
+		if err := index.Cmd(d, c, "/", nil); err != nil {
 			t.Fatalf("index.Cmd(%q): %v", c, err)
 		}
 		time.Sleep(5 * time.Millisecond) // ensure ts ordering
 	}
 
-	hits, err := Cmd(d, "", "user", 0)
+	hits, err := Cmd(d, "", "user", 0, "", "")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestCatEmpty(t *testing.T) {
 	}
 	defer d.Close()
 
-	hits, err := Cmd(d, "", "user", 0)
+	hits, err := Cmd(d, "", "user", 0, "", "")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -72,11 +72,11 @@ func TestCatCWDPreserved(t *testing.T) {
 	}
 	defer d.Close()
 
-	if err := index.Cmd(d, "make test", "/home/user/project"); err != nil {
+	if err := index.Cmd(d, "make test", "/home/user/project", nil); err != nil {
 		t.Fatalf("index.Cmd: %v", err)
 	}
 
-	hits, err := Cmd(d, "", "user", 0)
+	hits, err := Cmd(d, "", "user", 0, "", "")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -95,15 +95,15 @@ func TestCatCWDFilter(t *testing.T) {
 	}
 	defer d.Close()
 
-	if err := index.Cmd(d, "make test", "/home/user/project"); err != nil {
+	if err := index.Cmd(d, "make test", "/home/user/project", nil); err != nil {
 		t.Fatalf("index.Cmd: %v", err)
 	}
-	if err := index.Cmd(d, "make build", "/other/project"); err != nil {
+	if err := index.Cmd(d, "make build", "/other/project", nil); err != nil {
 		t.Fatalf("index.Cmd: %v", err)
 	}
 
 	// Filter to /home/user/project — only one result.
-	hits, err := Cmd(d, "/home/user/project", "user", 0)
+	hits, err := Cmd(d, "/home/user/project", "user", 0, "", "")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestCatCWDFilter(t *testing.T) {
 	}
 
 	// Empty filter returns all.
-	hits, err = Cmd(d, "", "user", 0)
+	hits, err = Cmd(d, "", "user", 0, "", "")
 	if err != nil {
 		t.Fatalf("Cmd (global): %v", err)
 	}
@@ -131,16 +131,16 @@ func TestCatSourceFilterUser(t *testing.T) {
 	}
 	defer d.Close()
 
-	if err := index.Cmd(d, "git status", "/"); err != nil {
+	if err := index.Cmd(d, "git status", "/", nil); err != nil {
 		t.Fatalf("index user: %v", err)
 	}
 	time.Sleep(2 * time.Millisecond)
-	if err := index.Cmd(d, "kubectl apply", "/", "claude"); err != nil {
+	if err := index.Cmd(d, "kubectl apply", "/", map[string]string{"source": "claude"}); err != nil {
 		t.Fatalf("index claude: %v", err)
 	}
 
 	// Default "user" filter: only shell-indexed command.
-	hits, err := Cmd(d, "", "user", 0)
+	hits, err := Cmd(d, "", "user", 0, "", "")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -156,15 +156,15 @@ func TestCatSourceFilterClaude(t *testing.T) {
 	}
 	defer d.Close()
 
-	if err := index.Cmd(d, "git status", "/"); err != nil {
+	if err := index.Cmd(d, "git status", "/", nil); err != nil {
 		t.Fatalf("index user: %v", err)
 	}
 	time.Sleep(2 * time.Millisecond)
-	if err := index.Cmd(d, "kubectl apply", "/", "claude"); err != nil {
+	if err := index.Cmd(d, "kubectl apply", "/", map[string]string{"source": "claude"}); err != nil {
 		t.Fatalf("index claude: %v", err)
 	}
 
-	hits, err := Cmd(d, "", "claude", 0)
+	hits, err := Cmd(d, "", "claude", 0, "", "")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}
@@ -183,15 +183,15 @@ func TestCatSourceFilterAll(t *testing.T) {
 	}
 	defer d.Close()
 
-	if err := index.Cmd(d, "git status", "/"); err != nil {
+	if err := index.Cmd(d, "git status", "/", nil); err != nil {
 		t.Fatalf("index user: %v", err)
 	}
 	time.Sleep(2 * time.Millisecond)
-	if err := index.Cmd(d, "kubectl apply", "/", "claude"); err != nil {
+	if err := index.Cmd(d, "kubectl apply", "/", map[string]string{"source": "claude"}); err != nil {
 		t.Fatalf("index claude: %v", err)
 	}
 
-	hits, err := Cmd(d, "", "all", 0)
+	hits, err := Cmd(d, "", "all", 0, "", "")
 	if err != nil {
 		t.Fatalf("Cmd: %v", err)
 	}

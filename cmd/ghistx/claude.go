@@ -18,8 +18,20 @@ func claudeCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "claude",
 		Usage: "View Claude Code command history or manage the Claude Code integration",
-		// Default action: show claude history globally, newest-first.
-		Flags: []cli.Flag{withSquelchFlag},
+		Flags: []cli.Flag{
+			withSquelchFlag,
+			reverseFlag,
+			&cli.StringFlag{
+				Name:    "tool",
+				Aliases: []string{"t"},
+				Usage:   "filter by tool name (e.g. Bash, Read, Edit)",
+			},
+			&cli.StringFlag{
+				Name:    "category",
+				Aliases: []string{"c"},
+				Usage:   "filter by tool category (e.g. shell, file, search, web, agent, cron)",
+			},
+		},
 		Action: func(c *cli.Context) error {
 			return runClaudeHistory(c)
 		},
@@ -38,15 +50,16 @@ func claudeCmd() *cli.Command {
 // runClaudeHistory shows claude-sourced history globally, newest-first, through $PAGER.
 func runClaudeHistory(c *cli.Context) error {
 	d := getDB(c)
-	// Always global, always claude source — that's the point of this command.
-	hits, err := cat.Cmd(d, "", "claude", 0)
+	hits, err := cat.Cmd(d, "", "claude", 0, c.String("tool"), c.String("category"))
 	if err != nil {
 		return err
 	}
 	hits = squelch.Filter(hits, resolveSquelchPatterns(c))
-	// Reverse to newest-first.
-	for i, j := 0, len(hits)-1; i < j; i, j = i+1, j-1 {
-		hits[i], hits[j] = hits[j], hits[i]
+	if !c.Bool("reverse") {
+		// Default: newest-first.
+		for i, j := 0, len(hits)-1; i < j; i, j = i+1, j-1 {
+			hits[i], hits[j] = hits[j], hits[i]
+		}
 	}
 	content := display.Render(hits, os.Stdout)
 	return runWithPager(content)
@@ -54,24 +67,82 @@ func runClaudeHistory(c *cli.Context) error {
 
 // hookScript is the content written to ~/.claude/hooks/ghistx-index.sh.
 // %s is replaced with the absolute path to the ghistx binary.
+// The script handles all PostToolUse events (no matcher), dispatching by tool_name.
 const hookScript = `#!/bin/sh
-# Index Claude Code Bash tool calls into ghistx.
-# Reads JSON from stdin: {"tool_input": {"command": "..."}, "cwd": "..."}
+# Index Claude Code tool calls into ghistx.
+# Reads JSON from stdin: {"tool_name": "...", "tool_input": {...}, "cwd": "..."}
 json=$(cat)
-cmd=$(printf '%%s' "$json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['tool_input']['command'])" 2>/dev/null)
-cwd=$(printf '%%s' "$json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('cwd',''))" 2>/dev/null)
-[ -z "$cmd" ] && exit 0
-exec %s index --source claude --cwd "$cwd" -- "$cmd"
+result=$(printf '%%s' "$json" | python3 - <<'PYEOF'
+import sys, json
+
+d = json.load(sys.stdin)
+tool = d.get('tool_name', '')
+inp = d.get('tool_input', {})
+cwd = d.get('cwd', '')
+
+SKIP = {
+    'TodoWrite', 'TodoRead',
+    'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'TaskOutput', 'TaskStop',
+    'EnterPlanMode', 'ExitPlanMode',
+    'EnterWorktree', 'ExitWorktree',
+    'ToolSearch', 'RemoteTrigger',
+}
+if tool in SKIP:
+    sys.exit(0)
+
+ARG_KEY = {
+    'Bash': 'command',
+    'Read': 'file_path',
+    'Write': 'file_path',
+    'Edit': 'file_path',
+    'MultiEdit': 'file_path',
+    'NotebookEdit': 'notebook_path',
+    'Glob': 'pattern',
+    'Grep': 'pattern',
+    'WebFetch': 'url',
+    'WebSearch': 'query',
+    'Agent': 'description',
+    'Skill': 'skill',
+    'CronCreate': 'schedule',
+    'CronDelete': 'trigger_id',
+}
+
+CATEGORY = {
+    'Bash': 'shell',
+    'Read': 'file', 'Write': 'file', 'Edit': 'file',
+    'MultiEdit': 'file', 'NotebookEdit': 'file',
+    'Glob': 'search', 'Grep': 'search',
+    'WebFetch': 'web', 'WebSearch': 'web',
+    'Agent': 'agent', 'Skill': 'agent',
+    'CronCreate': 'cron', 'CronDelete': 'cron', 'CronList': 'cron',
+}
+
+arg_key = ARG_KEY.get(tool)
+arg = inp.get(arg_key, '').strip() if arg_key else ''
+display = '[' + tool + '] ' + arg if arg else '[' + tool + ']'
+cat = CATEGORY.get(tool, 'other')
+
+# Tab-delimited: display\tcategory\ttool\tcwd
+print('\t'.join([display, cat, tool, cwd]))
+PYEOF
+2>/dev/null)
+
+[ -z "$result" ] && exit 0
+
+display=$(printf '%%s' "$result" | cut -f1)
+category=$(printf '%%s' "$result" | cut -f2)
+tool=$(printf '%%s' "$result" | cut -f3)
+cwd=$(printf '%%s' "$result" | cut -f4)
+
+exec %s index --source claude --tool "$tool" --category "$category" --cwd "$cwd" -- "$display"
 `
 
 // runClaudeInstall creates the hook script and patches ~/.claude/settings.json.
 func runClaudeInstall() error {
-	// Resolve ghistx binary path for use inside the hook script.
 	ghistxPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("could not determine ghistx path: %w", err)
 	}
-	// Follow any symlinks so the script points to the real binary.
 	if resolved, err := filepath.EvalSymlinks(ghistxPath); err == nil {
 		ghistxPath = resolved
 	}
@@ -84,7 +155,7 @@ func runClaudeInstall() error {
 	scriptPath := filepath.Join(hooksDir, "ghistx-index.sh")
 	settingsPath := filepath.Join(home, ".claude", "settings.json")
 
-	// 1. Create hook script.
+	// 1. Write hook script.
 	if err := os.MkdirAll(hooksDir, 0755); err != nil {
 		return fmt.Errorf("create hooks directory: %w", err)
 	}
@@ -108,10 +179,11 @@ func runClaudeInstall() error {
 	return nil
 }
 
-// patchSettingsJSON idempotently adds the ghistx PostToolUse Bash hook to
-// ~/.claude/settings.json. Returns true if the entry was newly added.
+// patchSettingsJSON idempotently registers the ghistx PostToolUse hook (all tools,
+// no matcher) in ~/.claude/settings.json. Any stale entry referencing our script
+// under a different matcher (e.g. old "Bash"-only installs) is replaced.
+// Returns true if the file was written (new install or upgrade); false if already correct.
 func patchSettingsJSON(settingsPath, scriptPath string) (bool, error) {
-	// Load existing settings (or start fresh if the file doesn't exist).
 	var root map[string]interface{}
 	data, err := os.ReadFile(settingsPath)
 	if err != nil && !os.IsNotExist(err) {
@@ -126,7 +198,6 @@ func patchSettingsJSON(settingsPath, scriptPath string) (bool, error) {
 		root = make(map[string]interface{})
 	}
 
-	// Navigate to hooks.PostToolUse, creating missing nodes as needed.
 	hooks, _ := root["hooks"].(map[string]interface{})
 	if hooks == nil {
 		hooks = make(map[string]interface{})
@@ -135,24 +206,45 @@ func patchSettingsJSON(settingsPath, scriptPath string) (bool, error) {
 
 	postToolUse, _ := hooks["PostToolUse"].([]interface{})
 
-	// Check whether our command is already present under a Bash matcher.
+	// If our script already exists under a no-matcher entry, nothing to do.
 	for _, item := range postToolUse {
 		m, _ := item.(map[string]interface{})
-		if m == nil || m["matcher"] != "Bash" {
-			continue
+		if m == nil || m["matcher"] != nil {
+			continue // skip entries with any matcher
 		}
 		innerHooks, _ := m["hooks"].([]interface{})
 		for _, h := range innerHooks {
 			hm, _ := h.(map[string]interface{})
 			if hm != nil && hm["command"] == scriptPath {
-				return false, nil // already installed
+				return false, nil // already correct
 			}
 		}
 	}
 
-	// Append a new Bash matcher entry with our hook command.
-	newMatcher := map[string]interface{}{
-		"matcher": "Bash",
+	// Remove any stale entry that references our script (different matcher).
+	filtered := make([]interface{}, 0, len(postToolUse))
+	for _, item := range postToolUse {
+		m, _ := item.(map[string]interface{})
+		if m == nil {
+			filtered = append(filtered, item)
+			continue
+		}
+		innerHooks, _ := m["hooks"].([]interface{})
+		hasOurs := false
+		for _, h := range innerHooks {
+			hm, _ := h.(map[string]interface{})
+			if hm != nil && hm["command"] == scriptPath {
+				hasOurs = true
+				break
+			}
+		}
+		if !hasOurs {
+			filtered = append(filtered, item)
+		}
+	}
+
+	// Add the new no-matcher all-tools entry.
+	newEntry := map[string]interface{}{
 		"hooks": []interface{}{
 			map[string]interface{}{
 				"type":    "command",
@@ -160,9 +252,8 @@ func patchSettingsJSON(settingsPath, scriptPath string) (bool, error) {
 			},
 		},
 	}
-	hooks["PostToolUse"] = append(postToolUse, newMatcher)
+	hooks["PostToolUse"] = append(filtered, newEntry)
 
-	// Write back with two-space indentation.
 	out, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
 		return false, fmt.Errorf("marshal settings.json: %w", err)

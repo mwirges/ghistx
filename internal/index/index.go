@@ -31,8 +31,9 @@ func Hash(cmd string) string {
 // Cmd indexes a single command string into the database.
 // cwd is the current working directory at the time the command was run.
 // If the command already exists (same hash), its timestamp and cwd are updated.
-// An optional source string (e.g. "claude") is stored in cmdmeta when provided.
-func Cmd(db *sql.DB, cmd, cwd string, source ...string) error {
+// meta is an optional map of key/value pairs stored in cmdmeta (e.g. "source",
+// "tool", "category"). A nil or empty map stores no metadata.
+func Cmd(db *sql.DB, cmd, cwd string, meta map[string]string) error {
 	hash := Hash(cmd)
 	b64cmd := base64.StdEncoding.EncodeToString([]byte(cmd))
 	b64cwd := base64.StdEncoding.EncodeToString([]byte(cwd))
@@ -49,13 +50,16 @@ func Cmd(db *sql.DB, cmd, cwd string, source ...string) error {
 		}
 	}
 
-	if len(source) > 0 && source[0] != "" {
+	for k, v := range meta {
+		if v == "" {
+			continue
+		}
 		_, err := db.Exec(
-			`INSERT OR REPLACE INTO cmdmeta(hash, key, value) VALUES(?, 'source', ?)`,
-			hash, source[0],
+			`INSERT OR REPLACE INTO cmdmeta(hash, key, value) VALUES(?, ?, ?)`,
+			hash, k, v,
 		)
 		if err != nil {
-			return fmt.Errorf("index: insert cmdmeta: %w", err)
+			return fmt.Errorf("index: insert cmdmeta %q: %w", k, err)
 		}
 	}
 	return nil
