@@ -72,14 +72,12 @@ const hookScript = `#!/bin/sh
 # Index Claude Code tool calls into ghistx.
 # Reads JSON from stdin: {"tool_name": "...", "tool_input": {...}, "cwd": "..."}
 json=$(cat)
-result=$(printf '%%s' "$json" | python3 - <<'PYEOF'
+result=$(printf '%%s' "$json" | python3 -c "
 import sys, json
-
 d = json.load(sys.stdin)
 tool = d.get('tool_name', '')
 inp = d.get('tool_input', {})
 cwd = d.get('cwd', '')
-
 SKIP = {
     'TodoWrite', 'TodoRead',
     'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'TaskOutput', 'TaskStop',
@@ -88,25 +86,16 @@ SKIP = {
     'ToolSearch', 'RemoteTrigger',
 }
 if tool in SKIP:
-    sys.exit(0)
-
+    raise SystemExit(0)
 ARG_KEY = {
     'Bash': 'command',
-    'Read': 'file_path',
-    'Write': 'file_path',
-    'Edit': 'file_path',
-    'MultiEdit': 'file_path',
-    'NotebookEdit': 'notebook_path',
-    'Glob': 'pattern',
-    'Grep': 'pattern',
-    'WebFetch': 'url',
-    'WebSearch': 'query',
-    'Agent': 'description',
-    'Skill': 'skill',
-    'CronCreate': 'schedule',
-    'CronDelete': 'trigger_id',
+    'Read': 'file_path', 'Write': 'file_path', 'Edit': 'file_path',
+    'MultiEdit': 'file_path', 'NotebookEdit': 'notebook_path',
+    'Glob': 'pattern', 'Grep': 'pattern',
+    'WebFetch': 'url', 'WebSearch': 'query',
+    'Agent': 'description', 'Skill': 'skill',
+    'CronCreate': 'schedule', 'CronDelete': 'trigger_id',
 }
-
 CATEGORY = {
     'Bash': 'shell',
     'Read': 'file', 'Write': 'file', 'Edit': 'file',
@@ -116,16 +105,12 @@ CATEGORY = {
     'Agent': 'agent', 'Skill': 'agent',
     'CronCreate': 'cron', 'CronDelete': 'cron', 'CronList': 'cron',
 }
-
 arg_key = ARG_KEY.get(tool)
 arg = inp.get(arg_key, '').strip() if arg_key else ''
 display = '[' + tool + '] ' + arg if arg else '[' + tool + ']'
 cat = CATEGORY.get(tool, 'other')
-
-# Tab-delimited: display\tcategory\ttool\tcwd
 print('\t'.join([display, cat, tool, cwd]))
-PYEOF
-2>/dev/null)
+" 2>/dev/null)
 
 [ -z "$result" ] && exit 0
 
