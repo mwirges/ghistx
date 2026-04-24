@@ -51,6 +51,19 @@ func Open(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("db: open %q: %w", path, err)
 	}
 
+	// Retry for up to 5 seconds when another process holds a write lock
+	// (common when multiple hook invocations fire concurrently).
+	if _, err := db.Exec(`PRAGMA busy_timeout=5000`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("db: set busy_timeout: %w", err)
+	}
+	// WAL mode serialises writers while allowing concurrent readers, which
+	// further reduces contention between simultaneous hook processes.
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("db: set journal_mode: %w", err)
+	}
+
 	if _, err := db.Exec(ddl); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("db: init schema: %w", err)

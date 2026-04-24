@@ -39,13 +39,19 @@ func Cmd(db *sql.DB, cmd, cwd string, meta map[string]string) error {
 	b64cwd := base64.StdEncoding.EncodeToString([]byte(cwd))
 	ts := time.Now().UnixMilli()
 
-	if _, err := db.Exec(insertRaw, hash, ts, b64cmd, b64cwd); err != nil {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("index: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err := tx.Exec(insertRaw, hash, ts, b64cmd, b64cwd); err != nil {
 		return fmt.Errorf("index: insert cmdraw: %w", err)
 	}
 
 	grams := ngram.Gen(cmd)
 	for _, g := range grams {
-		if _, err := db.Exec(insertLUT, "", g, hash); err != nil {
+		if _, err := tx.Exec(insertLUT, "", g, hash); err != nil {
 			return fmt.Errorf("index: insert cmdlut ngram %d: %w", g, err)
 		}
 	}
@@ -54,13 +60,17 @@ func Cmd(db *sql.DB, cmd, cwd string, meta map[string]string) error {
 		if v == "" {
 			continue
 		}
-		_, err := db.Exec(
+		_, err := tx.Exec(
 			`INSERT OR REPLACE INTO cmdmeta(hash, key, value) VALUES(?, ?, ?)`,
 			hash, k, v,
 		)
 		if err != nil {
 			return fmt.Errorf("index: insert cmdmeta %q: %w", k, err)
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("index: commit: %w", err)
 	}
 	return nil
 }
