@@ -308,6 +308,287 @@ func TestVersion2MissingCmdmetaRepaired(t *testing.T) {
 	}
 }
 
+func TestFreshFileOpenRecordsVersions1And2(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "histx.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	v, err := version(d)
+	if err != nil {
+		t.Fatalf("version: %v", err)
+	}
+	if v != versionCmdmeta {
+		t.Fatalf("MAX(version) = %d, want %d", v, versionCmdmeta)
+	}
+	assertVersions(t, d, versionCWD, versionCmdmeta)
+	assertCWD(t, d, true)
+	assertCmdmeta(t, d)
+	if err := d.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	d, err = Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer d.Close()
+
+	v, err = version(d)
+	if err != nil {
+		t.Fatalf("version after reopen: %v", err)
+	}
+	if v != versionCmdmeta {
+		t.Fatalf("MAX(version) after reopen = %d, want %d", v, versionCmdmeta)
+	}
+	assertVersions(t, d, versionCWD, versionCmdmeta)
+
+	var n int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM histxversion`).Scan(&n); err != nil {
+		t.Fatalf("count versions: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("histxversion rows = %d, want 2", n)
+	}
+	// assertCmdmeta inserted this row. Reopening must not rebuild cmdmeta empty.
+	var value string
+	if err := d.QueryRow(
+		`SELECT value FROM cmdmeta WHERE hash='h' AND key='source'`,
+	).Scan(&value); err != nil {
+		t.Fatalf("cmdmeta row after reopen: %v", err)
+	}
+	if value != "user" {
+		t.Fatalf("cmdmeta value = %q, want user", value)
+	}
+}
+
+func TestVersion2WithCmdmetaIsNotRewritten(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "histx.db")
+	d, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := d.Exec(ddl); err != nil {
+		t.Fatalf("ddl: %v", err)
+	}
+	if _, err := d.Exec(`ALTER TABLE cmdraw ADD COLUMN cwd TEXT`); err != nil {
+		t.Fatalf("add cwd: %v", err)
+	}
+	if _, err := d.Exec(`
+		CREATE TABLE cmdmeta (
+			hash  TEXT,
+			key   TEXT,
+			value TEXT,
+			UNIQUE(hash, key)
+		)`); err != nil {
+		t.Fatalf("create cmdmeta: %v", err)
+	}
+	if _, err := d.Exec(`CREATE INDEX idx_cmdmeta_hash ON cmdmeta(hash)`); err != nil {
+		t.Fatalf("create index: %v", err)
+	}
+	const whence = 424242
+	if _, err := d.Exec(
+		`INSERT INTO histxversion(version, whence) VALUES(?, ?)`,
+		versionCmdmeta, whence,
+	); err != nil {
+		t.Fatalf("insert version: %v", err)
+	}
+	if _, err := d.Exec(
+		`INSERT INTO cmdraw(hash, ts, cmd, cwd) VALUES('hash-keep', 1710000001, 'echo keep', '/work')`,
+	); err != nil {
+		t.Fatalf("insert cmdraw: %v", err)
+	}
+	if _, err := d.Exec(
+		`INSERT INTO cmdmeta(hash, key, value) VALUES('hash-keep', 'source', 'claude')`,
+	); err != nil {
+		t.Fatalf("insert cmdmeta: %v", err)
+	}
+	before := migratedState(t, d)
+	if err := d.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	d, err = Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer d.Close()
+
+	after := migratedState(t, d)
+	if before != after {
+		t.Fatalf("version-2 database changed\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+func TestDuplicateColumnFileOpenRecordsVersion1And2(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "histx.db")
+	d, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := d.Exec(ddl); err != nil {
+		t.Fatalf("ddl: %v", err)
+	}
+	if _, err := d.Exec(`ALTER TABLE cmdraw ADD COLUMN cwd TEXT`); err != nil {
+		t.Fatalf("add cwd: %v", err)
+	}
+	if _, err := d.Exec(
+		`INSERT INTO cmdraw(hash, ts, cmd, cwd) VALUES('hash-cwd', 1710000002, 'echo cwd', '/already')`,
+	); err != nil {
+		t.Fatalf("insert cmdraw: %v", err)
+	}
+	before := commandRows(t, d)
+	if err := d.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	d, err = Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer d.Close()
+
+	v, err := version(d)
+	if err != nil {
+		t.Fatalf("version: %v", err)
+	}
+	if v != versionCmdmeta {
+		t.Fatalf("MAX(version) = %d, want %d", v, versionCmdmeta)
+	}
+	assertVersions(t, d, versionCWD, versionCmdmeta)
+	assertCWD(t, d, true)
+	if got := commandRows(t, d); got != before {
+		t.Fatalf("command rows = %q, want %q", got, before)
+	}
+	assertCmdmeta(t, d)
+}
+
+func TestMigration2FailureRollsBackAndNextOpenCompletes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "histx.db")
+	d, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := d.Exec(ddl); err != nil {
+		t.Fatalf("ddl: %v", err)
+	}
+	if err := migration1(d); err != nil {
+		t.Fatalf("migration1: %v", err)
+	}
+	if _, err := d.Exec(
+		`INSERT INTO cmdraw(hash, ts, cmd, cwd) VALUES('hash-stay', 1710000003, 'echo stay', '/home')`,
+	); err != nil {
+		t.Fatalf("insert cmdraw: %v", err)
+	}
+	before := commandRows(t, d)
+	if _, err := d.Exec(`
+		CREATE TRIGGER fail_v2 BEFORE INSERT ON histxversion
+		WHEN NEW.version = 2
+		BEGIN
+			SELECT RAISE(ABORT, 'fail version 2');
+		END`); err != nil {
+		t.Fatalf("trigger: %v", err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	if _, err := Open(path); err == nil {
+		t.Fatal("Open succeeded, want migration 2 error")
+	}
+
+	d, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	v, err := version(d)
+	if err != nil {
+		t.Fatalf("version: %v", err)
+	}
+	if v != versionCWD {
+		t.Fatalf("version after failed migration 2 = %d, want %d", v, versionCWD)
+	}
+	assertVersions(t, d, versionCWD)
+	exists, err := tableExists(d, "cmdmeta")
+	if err != nil {
+		t.Fatalf("tableExists: %v", err)
+	}
+	if exists {
+		t.Fatal("cmdmeta exists after rolled-back migration 2")
+	}
+	if got := commandRows(t, d); got != before {
+		t.Fatalf("command rows after failed Open = %q, want %q", got, before)
+	}
+	if _, err := d.Exec(`DROP TRIGGER fail_v2`); err != nil {
+		t.Fatalf("drop trigger: %v", err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	d, err = Open(path)
+	if err != nil {
+		t.Fatalf("retry Open: %v", err)
+	}
+	defer d.Close()
+
+	v, err = version(d)
+	if err != nil {
+		t.Fatalf("version after retry: %v", err)
+	}
+	if v != versionCmdmeta {
+		t.Fatalf("version after retry = %d, want %d", v, versionCmdmeta)
+	}
+	assertVersions(t, d, versionCWD, versionCmdmeta)
+	if got := commandRows(t, d); got != before {
+		t.Fatalf("command rows after retry = %q, want %q", got, before)
+	}
+	assertCmdmeta(t, d)
+}
+
+func TestOpenDoesNotRewriteExistingCommandRows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "histx.db")
+	d, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := d.Exec(ddl); err != nil {
+		t.Fatalf("ddl: %v", err)
+	}
+	if _, err := d.Exec(
+		`INSERT INTO cmdraw(hash, ts, cmd) VALUES(?, ?, ?), (?, ?, ?)`,
+		"pre-a", int64(555), "echo 'kept'",
+		"pre-b", int64(556), "ls /tmp",
+	); err != nil {
+		t.Fatalf("insert cmdraw: %v", err)
+	}
+	before := commandIdentity(t, d)
+	if err := d.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	d, err = Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer d.Close()
+
+	if got := commandIdentity(t, d); got != before {
+		t.Fatalf("command identity = %q, want %q", got, before)
+	}
+	var n int
+	if err := d.QueryRow(
+		`SELECT COUNT(*) FROM cmdraw WHERE cwd IS NOT NULL`,
+	).Scan(&n); err != nil {
+		t.Fatalf("count cwd: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("rows with cwd = %d, want 0", n)
+	}
+	assertVersions(t, d, versionCWD, versionCmdmeta)
+}
+
 func openBare(t *testing.T, path string) *sql.DB {
 	t.Helper()
 	d, err := sql.Open("sqlite", path)
@@ -416,4 +697,50 @@ func assertCmdmeta(t *testing.T, d *sql.DB) {
 	if err == nil {
 		t.Fatal("duplicate (hash, key) insert succeeded")
 	}
+}
+
+// migratedState is the version, schema, and stored rows of a database that
+// already has cwd and cmdmeta. Open must leave it unchanged.
+func migratedState(t *testing.T, d *sql.DB) string {
+	t.Helper()
+	return strings.Join([]string{
+		queryLines(t, d, `SELECT version || ',' || whence FROM histxversion ORDER BY version`),
+		queryLines(t, d, `SELECT name || '|' || type || '|' || ifnull(sql, '') FROM sqlite_master WHERE name IN ('cmdraw', 'cmdmeta', 'idx_cmdmeta_hash', 'histxversion') ORDER BY name`),
+		commandRows(t, d),
+		queryLines(t, d, `SELECT rowid || '|' || hash || '|' || key || '|' || value FROM cmdmeta ORDER BY rowid`),
+	}, "\n")
+}
+
+func commandRows(t *testing.T, d *sql.DB) string {
+	t.Helper()
+	return queryLines(t, d, `SELECT rowid || '|' || hash || '|' || ts || '|' || cmd || '|' || ifnull(cwd, '<null>') FROM cmdraw ORDER BY rowid`)
+}
+
+// commandIdentity is hash, timestamp, command text, and rowid before cwd exists.
+func commandIdentity(t *testing.T, d *sql.DB) string {
+	t.Helper()
+	return queryLines(t, d, `SELECT rowid || '|' || hash || '|' || ts || '|' || cmd FROM cmdraw ORDER BY rowid`)
+}
+
+func queryLines(t *testing.T, d *sql.DB, q string) string {
+	t.Helper()
+	rows, err := d.Query(q)
+	if err != nil {
+		t.Fatalf("query %s: %v", q, err)
+	}
+	defer rows.Close()
+
+	var b strings.Builder
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("query %s: %v", q, err)
+	}
+	return b.String()
 }
